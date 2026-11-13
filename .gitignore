@@ -39,3 +39,10 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# local database and uploaded proof-of-work files
+/data
+!.env.example
+
+# isolated test builds
+/.next-test
