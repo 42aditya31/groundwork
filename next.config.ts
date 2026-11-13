@@ -1,4 +1,18 @@
+import fs from "node:fs";
+import path from "node:path";
+import { createHash } from "node:crypto";
 import type { NextConfig } from "next";
+
+/** Fingerprint of the built syllabus files (scripts/build-content.ts runs before dev and build). */
+function contentVersion() {
+  try {
+    const h = createHash("sha256");
+    for (const id of ["frontend", "designer"]) h.update(fs.readFileSync(path.join(process.cwd(), "content", `${id}.sqlite`)));
+    return h.digest("hex").slice(0, 16);
+  } catch {
+    return "dev";
+  }
+}
 
 /**
  * Groundwork is local-first: sign-in is verified on the server, the syllabus is served as a small
@@ -10,6 +24,7 @@ const nextConfig: NextConfig = {
   distDir: process.env.NEXT_DIST_DIR ?? ".next",
   cacheComponents: false,
   partialPrefetching: false,
+  env: { GROUNDWORK_CONTENT_VERSION: contentVersion() },
   // The syllabus databases are read at runtime by /api/content.
   outputFileTracingIncludes: { "/api/content": ["./content/**"] },
   async headers() {

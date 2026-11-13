@@ -114,7 +114,7 @@ export function openLocalDb(user: AuthUser, contentVersion: string): Promise<voi
   if (opening?.key === key) return opening.promise;
   const promise = (async () => {
     sqlJs ??= initSqlJs({ locateFile: () => "/sql-wasm.wasm" });
-    const [SQL, res] = await Promise.all([sqlJs, fetch(`/api/content?v=${contentVersion}`)]);
+    const [SQL, res] = await Promise.all([sqlJs, fetch(`/api/content?v=${contentVersion}&path=${user.pathId}`)]);
     if (res.status === 401) {
       window.location.assign(new URL("/login", window.location.origin).toString());
       return;

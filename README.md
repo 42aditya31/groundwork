@@ -7,31 +7,25 @@ A private mastery platform for two learners: **Aditya Sharma** (AI-Native Fronte
 ```bash
 npm install
 cp .env.example .env.local      # set SEED_PASSWORD_ADITYA and SEED_PASSWORD_HARSH
-npm run db:seed                 # loads both syllabuses + creates the two accounts (hashed passwords)
-npm run dev                     # http://localhost:3000
+npm run dev                     # builds the syllabus files, then serves http://localhost:3000
 ```
 
-Production:
+## Where data lives
 
-```bash
-npm run build
-npm start                       # serves on port 3000
-```
-
-After seeding, the passwords exist only as scrypt hashes in the database. You can delete `.env.local` (keep a copy somewhere safe if you want to re-run `db:seed -- --reset-passwords`).
-
-## How it works
+- **Sign-in** is verified on the server against the passwords in env vars (hashed with scrypt in memory). The session is a signed, httpOnly cookie, with no database involved.
+- **The syllabus** is built into `content/<path>.sqlite` by `scripts/build-content.ts` (runs before `dev` and `build`) and served only to a signed-in learner by `/api/content`.
+- **Everything a learner adds** (progress, notes, sessions, plan, projects, proof of work) is saved in their browser's localStorage under `groundwork:data:<user>`. Uploaded files go to the browser's IndexedDB. Nothing is sent to the server.
+- **Backups:** Settings → *Download backup* saves one JSON file, including uploads. *Restore from backup* loads it in any browser. Clearing site data erases local progress, so download a backup regularly.
 
 | Area | Where |
 |---|---|
-| Syllabus parser (Markdown → domains, parent topics, topics, subtopics, concepts, prerequisites, resources, capstones) | `src/lib/syllabus/parse.ts` |
-| Seeding (deterministic IDs, so re-seeding after editing a syllabus keeps progress) | `scripts/seed.ts` |
-| Planner (scope selection, daily packing, revision, assessments, weekend projects, daily automatic replan) | `src/server/planner.ts` |
-| Weekend project building blocks per domain | `src/lib/syllabus/project-templates.ts` |
-| Auth (scrypt hashes, hashed session tokens in httpOnly cookies, login rate limiting) | `src/server/auth.ts` |
-| Authorization helpers (every action re-checks ownership server-side) | `src/server/guards.ts` |
-| Server actions | `src/server/actions/*` |
-| Database schema (SQLite via Drizzle; migrations in `drizzle/`) | `src/db/schema.ts` |
+| Syllabus parser | `src/lib/syllabus/parse.ts` |
+| Syllabus build | `scripts/build-content.ts`, `scripts/lib/setup.ts` |
+| Browser store (sql.js + localStorage + backup) | `src/local/store.ts`, `src/local/files.ts` |
+| Planner | `src/local/planner.ts` |
+| Actions | `src/local/actions/*` |
+| Auth and sessions | `src/server/auth.ts`, `src/server/session.ts`, `src/proxy.ts` |
+| Schema (Drizzle) | `src/db/schema.ts` |
 
 **Planning rules.** Essential topics come first. If they don't all fit your hours, every domain gets a share of the time (weighted towards foundations and AI-native skills) and takes a contiguous slice of its topics in syllabus order; the rest is marked *continued learning* instead of pretending it will be finished. Weekdays carry learning plus daily review of the previous day's topics and a Friday mastery check; weekends carry the weekly project generated from that week's topics, increasing in difficulty each week. Completing a topic schedules spaced revision at +2 and +7 days. Once a day the plan rebuilds: unfinished tasks are marked as moved forward and the remaining time is redistributed.
 
@@ -43,25 +37,24 @@ After seeding, the passwords exist only as scrypt hashes in the database. You ca
 
 ## Configuration
 
-| Variable | Default | Purpose |
-|---|---|---|
-| `DATABASE_PATH` | `./data/groundwork.db` | SQLite database file |
-| `UPLOAD_DIR` | `./data/uploads` | Proof-of-work uploads (served only to their owner via `/api/files/[id]`) |
-| `SYLLABUS_DIR` | `./syllabus` | Folder containing the two syllabus Markdown files |
-| `INSECURE_COOKIES` | unset | Set to `1` only if you must serve production over plain HTTP (not recommended) |
+| Variable | Purpose |
+|---|---|
+| `SEED_PASSWORD_ADITYA`, `SEED_PASSWORD_HARSH` | Sign-in passwords (server only) |
+| `SESSION_SECRET` | Optional cookie-signing key; if unset, one is derived from the passwords |
+| `SYLLABUS_DIR` | Folder with the syllabus Markdown files (default `./syllabus`) |
+| `INSECURE_COOKIES` | Set to `1` only to serve production over plain HTTP |
 
-## Deployment
+## Deploying to Vercel
 
-Groundwork needs a Node.js 22+ host with a **persistent disk** for the SQLite file and uploads, e.g. a small VPS, Railway, Render or Fly.io with a mounted volume. Point `DATABASE_PATH` and `UPLOAD_DIR` at the volume, run `npm run db:seed` once, and serve over HTTPS. Serverless platforms without a persistent filesystem would need the database moved to hosted SQLite/Postgres and uploads to object storage.
+1. Import the repo. Keep the default build command (`npm run build`).
+2. In Project → Settings → Environment Variables, add `SEED_PASSWORD_ADITYA` and `SEED_PASSWORD_HARSH`.
+3. Deploy. No database or storage setup is needed; every push redeploys automatically.
 
 ## Tests
 
 ```bash
-# Throwaway test database (never touches data/groundwork.db)
-DATABASE_PATH=./data/test.db npm run db:seed
-DATABASE_PATH=./data/test.db UPLOAD_DIR=./data/test-uploads npx next dev --port 3100
-npm run test:reset -- data/test.db
-npm run test:e2e -- ./data/e2e-shots        # Playwright: auth, isolation, every page, topic→proof→mastery, uploads, mobile, dark mode
-DATABASE_PATH=./data/test.db npm run test:planner   # planner invariants across simulated days
+NEXT_DIST_DIR=.next-test npm run build
+NEXT_DIST_DIR=.next-test npx next start --port 3100
+npm run test:e2e -- ./data/e2e-shots        # Playwright: auth, isolation, every page, topic→proof→mastery, uploads, backup, mobile, dark mode
 npm run syllabus:inspect                    # structural summary of both syllabus files
 ```
