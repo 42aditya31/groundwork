@@ -1,211 +1,259 @@
 "use client";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
-import { useEffect, useRef, useState } from "react";
-import {
-  CalendarDays,
-  CircleCheckBig,
-  FolderKanban,
-  LayoutGrid,
-  Library,
-  LineChart,
-  LogOut,
-  Map as MapIcon,
-  Menu,
-  Moon,
-  Settings,
-  Sun,
-  SunMoon,
-  BadgeCheck,
-  X,
-} from "lucide-react";
+import { usePathname, useRouter } from "next/navigation";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { logout } from "@/server/actions/auth";
-import { BrandMark, cx } from "@/components/ui";
-import { SessionTimer, type TimerInfo } from "./session-timer";
-import { THEME_KEY, applyTheme, usePersistentState, type ThemeChoice } from "@/lib/persistent";
+import { Brand, cx } from "@/components/ui";
+import { SessionPill, type TimerInfo } from "./session-timer";
 
-const NAV = [
-  { href: "/", label: "Overview", icon: LayoutGrid },
-  { href: "/today", label: "Today", icon: CircleCheckBig },
-  { href: "/roadmap", label: "Roadmap", icon: MapIcon },
-  { href: "/calendar", label: "Calendar", icon: CalendarDays },
-  { href: "/projects", label: "Projects", icon: FolderKanban },
-  { href: "/proof", label: "Proof of work", icon: BadgeCheck },
-  { href: "/resources", label: "Resources", icon: Library },
-  { href: "/progress", label: "Progress", icon: LineChart },
+export const PAGES = [
+  { href: "/", label: "Overview", key: "1" },
+  { href: "/today", label: "Today", key: "2" },
+  { href: "/roadmap", label: "Roadmap", key: "3" },
+  { href: "/projects", label: "Projects", key: "4" },
+  { href: "/proof", label: "Proof of work", key: "5" },
+  { href: "/calendar", label: "Calendar", key: "6" },
+  { href: "/resources", label: "Resources", key: "7" },
+  { href: "/progress", label: "Progress", key: "8" },
+  { href: "/settings", label: "Settings", key: "9" },
 ];
-const MOBILE_TABS = ["/", "/today", "/roadmap", "/projects"];
+const TABS = [
+  { href: "/", label: "Home" },
+  { href: "/today", label: "Today" },
+  { href: "/roadmap", label: "Map" },
+  { href: "/projects", label: "Build" },
+];
 
 function isActive(pathname: string, href: string) {
   return href === "/" ? pathname === "/" : pathname === href || pathname.startsWith(`${href}/`);
 }
 
-export function AppNav({ user, timer }: { user: { name: string; role: string }; timer: TimerInfo | null }) {
+export interface NavUser {
+  name: string;
+  initials: string;
+  pathLabel: string;
+  daysLeft: number;
+}
+
+export function AppShell({ user, timer, topics, children }: { user: NavUser; timer: TimerInfo | null; topics: { id: string; code: string; title: string }[]; children: React.ReactNode }) {
   const pathname = usePathname();
-  const [sheetOpen, setSheetOpen] = useState(false);
-  const sheetRef = useRef<HTMLDialogElement>(null);
+  const router = useRouter();
+  const [cmdOpen, setCmdOpen] = useState(false);
 
+  // ⌘K / Ctrl+K opens the command palette; 1–9 jump between pages (outside text fields).
   useEffect(() => {
-    const d = sheetRef.current;
-    if (!d) return;
-    if (sheetOpen && !d.open) d.showModal();
-    if (!sheetOpen && d.open) d.close();
-  }, [sheetOpen]);
-
-  const initials = user.name
-    .split(" ")
-    .map((p) => p[0])
-    .join("")
-    .slice(0, 2);
+    const onKey = (e: KeyboardEvent) => {
+      const k = e.key.toLowerCase();
+      if ((e.metaKey || e.ctrlKey) && k === "k") {
+        e.preventDefault();
+        setCmdOpen((o) => !o);
+        return;
+      }
+      const tag = (e.target as HTMLElement | null)?.tagName?.toLowerCase() ?? "";
+      if (tag === "input" || tag === "textarea" || tag === "select" || (e.target as HTMLElement | null)?.isContentEditable) return;
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      const page = PAGES.find((p) => p.key === e.key);
+      if (page) router.push(page.href);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [router]);
 
   return (
-    <>
-      <a href="#main" className="sr-only z-50 rounded bg-ink px-3 py-2 text-bg focus:not-sr-only focus:fixed focus:top-3 focus:left-3">
+    <div className="min-h-dvh md:grid md:grid-cols-[228px_minmax(0,1fr)]">
+      <a href="#main" className="sr-only z-50 rounded bg-ink px-3 py-2 text-on-ink focus:not-sr-only focus:fixed focus:top-3 focus:left-3">
         Skip to content
       </a>
 
-      {/* Desktop sidebar */}
-      <aside className="sticky top-0 hidden h-dvh flex-col border-r border-line bg-surface/60 px-4 py-6 lg:flex">
-        <Link href="/" className="flex items-center gap-2.5 px-2 text-ink">
-          <BrandMark className="size-6" />
-          <span className="text-[17px] font-semibold tracking-tight">Groundwork</span>
+      {/* Desktop rail */}
+      <aside className="sticky top-0 hidden h-dvh flex-col gap-[22px] border-r border-line px-3.5 py-6 md:flex">
+        <Link href="/" className="px-2.5">
+          <Brand />
         </Link>
-        <div className="mt-7 flex items-center gap-3 px-2">
-          <span className="flex size-9 shrink-0 items-center justify-center rounded-full bg-path-fill text-[13px] font-semibold text-fill-ink">{initials}</span>
-          <div className="min-w-0">
-            <div className="truncate text-sm font-semibold">{user.name}</div>
-            <div className="truncate text-[12.5px] text-ink-3">{user.role}</div>
-          </div>
-        </div>
-        {timer && (
-          <div className="mt-5">
-            <SessionTimer timer={timer} />
-          </div>
-        )}
-        <nav aria-label="Main" className="mt-6 flex flex-1 flex-col gap-0.5">
-          {NAV.map(({ href, label, icon: Icon }) => {
-            const active = isActive(pathname, href);
+        <button
+          type="button"
+          onClick={() => setCmdOpen(true)}
+          className="flex h-[38px] items-center justify-between rounded-[10px] border border-line bg-panel px-2.5 text-[13px] text-ink-3 transition-colors hover:border-line-strong hover:text-ink"
+        >
+          <span>Jump to…</span>
+          <span className="font-mono text-[11px]">⌘K</span>
+        </button>
+        <nav aria-label="Main" className="flex flex-col gap-0.5">
+          {PAGES.map((p) => {
+            const active = isActive(pathname, p.href) || (p.href === "/roadmap" && pathname.startsWith("/roadmap"));
             return (
               <Link
-                key={href}
-                href={href}
+                key={p.href}
+                href={p.href}
                 aria-current={active ? "page" : undefined}
-                className={cx(
-                  "group flex h-9 items-center gap-3 rounded-lg px-2.5 text-[14px] transition-colors",
-                  active ? "bg-surface-2 font-medium text-ink" : "text-ink-2 hover:bg-surface-2/70 hover:text-ink",
-                )}
+                className={cx("flex h-9 items-center justify-between rounded-lg px-2.5 text-[14px] transition-colors", active ? "bg-hover text-ink" : "text-ink-3 hover:text-ink")}
               >
-                <Icon className={cx("size-4.5", active ? "text-accent" : "text-ink-3 group-hover:text-ink-2")} strokeWidth={1.75} />
-                {label}
+                <span className="flex items-center gap-2.5">
+                  <span aria-hidden="true" className={cx("size-1.5 rounded-full", active ? "bg-accent" : "bg-transparent")} />
+                  {p.label}
+                </span>
+                <span className="font-mono text-[10px] text-ink-4" aria-hidden="true">
+                  {p.key}
+                </span>
               </Link>
             );
           })}
         </nav>
-        <div className="flex flex-col gap-0.5 border-t border-line pt-3">
-          <Link
-            href="/settings"
-            aria-current={isActive(pathname, "/settings") ? "page" : undefined}
-            className={cx("flex h-9 items-center gap-3 rounded-lg px-2.5 text-[14px] text-ink-2 hover:bg-surface-2/70 hover:text-ink", isActive(pathname, "/settings") && "bg-surface-2 text-ink")}
-          >
-            <Settings className="size-4.5 text-ink-3" strokeWidth={1.75} />
-            Settings
-          </Link>
-          <ThemeSwitch />
-          <form action={logout}>
-            <button type="submit" className="flex h-9 w-full items-center gap-3 rounded-lg px-2.5 text-[14px] text-ink-2 hover:bg-surface-2/70 hover:text-ink">
-              <LogOut className="size-4.5 text-ink-3" strokeWidth={1.75} />
-              Log out
+        <div className="flex-1" />
+        <div className="flex items-baseline gap-2.5 px-2.5">
+          <span className="numeral text-[56px] text-ink">{user.daysLeft}</span>
+          <span className="font-mono text-[10px] leading-snug text-ink-3">
+            DAYS TO
+            <br />
+            DEC 31
+          </span>
+        </div>
+        <div className="flex items-center gap-2.5 border-t border-line px-2.5 pt-3">
+          <span className="grid size-[34px] shrink-0 place-items-center rounded-full bg-accent text-[12px] font-semibold text-black">{user.initials}</span>
+          <div className="flex min-w-0 flex-1 flex-col">
+            <span className="truncate text-[13px] font-medium">{user.name}</span>
+            <span className="truncate text-[11px] text-ink-3">{user.pathLabel}</span>
+          </div>
+          <form autoComplete="off" action={logout}>
+            <button type="submit" title="Sign out" aria-label="Sign out" className="p-1.5 font-mono text-[10px] text-ink-3 transition-colors hover:text-danger">
+              EXIT
             </button>
           </form>
         </div>
       </aside>
 
-      {/* Mobile top bar */}
-      <header className="sticky top-0 z-30 flex h-14 items-center justify-between border-b border-line bg-bg/90 px-4 backdrop-blur lg:hidden">
-        <Link href="/" className="flex items-center gap-2 text-ink">
-          <BrandMark className="size-6" />
-          <span className="font-semibold tracking-tight">Groundwork</span>
-        </Link>
-        {timer ? <SessionTimer timer={timer} compact /> : <span className="flex size-8 items-center justify-center rounded-full bg-path-fill text-xs font-semibold text-fill-ink">{initials}</span>}
-      </header>
-
-      {/* Mobile tab bar */}
-      <nav aria-label="Main" className="fixed inset-x-0 bottom-0 z-40 border-t border-line bg-surface/95 pb-[env(safe-area-inset-bottom)] backdrop-blur lg:hidden">
-        <div className="mx-auto grid max-w-lg grid-cols-5">
-          {NAV.filter((n) => MOBILE_TABS.includes(n.href)).map(({ href, label, icon: Icon }) => {
-            const active = isActive(pathname, href);
-            return (
-              <Link key={href} href={href} aria-current={active ? "page" : undefined} className={cx("flex h-16 flex-col items-center justify-center gap-1 text-[11px]", active ? "text-ink" : "text-ink-3")}>
-                <Icon className={cx("size-5", active && "text-accent")} strokeWidth={active ? 2 : 1.75} />
-                {label}
-              </Link>
-            );
-          })}
-          <button type="button" onClick={() => setSheetOpen(true)} className="flex h-16 flex-col items-center justify-center gap-1 text-[11px] text-ink-3" aria-haspopup="dialog">
-            <Menu className="size-5" strokeWidth={1.75} />
-            More
-          </button>
-        </div>
-      </nav>
-
-      <dialog
-        ref={sheetRef}
-        onClose={() => setSheetOpen(false)}
-        onClick={(e) => e.target === sheetRef.current && setSheetOpen(false)}
-        aria-label="More navigation"
-        className="fixed inset-x-0 top-auto bottom-0 m-0 w-full max-w-none rounded-t-2xl border border-line bg-surface p-0 text-ink shadow-pop lg:hidden"
-      >
-        <div className="px-4 pt-3 pb-[calc(1rem+env(safe-area-inset-bottom))]">
-          <div className="mb-2 flex items-center justify-between">
-            <div>
-              <div className="text-sm font-semibold">{user.name}</div>
-              <div className="text-[12.5px] text-ink-3">{user.role}</div>
-            </div>
-            <button type="button" onClick={() => setSheetOpen(false)} aria-label="Close" className="rounded-lg p-2 text-ink-3 hover:bg-surface-2">
-              <X className="size-5" />
+      <main id="main" className="min-w-0 px-[18px] pt-[18px] pb-36 md:px-[clamp(24px,4vw,56px)] md:pt-9 md:pb-36">
+        {/* Mobile header */}
+        <div className="mb-7 flex items-center justify-between md:hidden">
+          <Link href="/">
+            <Brand round />
+          </Link>
+          <div className="flex items-center gap-2.5">
+            <span className="font-mono text-[11px] text-ink-3">{user.daysLeft}D</span>
+            <button type="button" onClick={() => setCmdOpen(true)} className="h-10 rounded-full border-[1.5px] border-ink px-4 text-[13px] font-medium">
+              Search
             </button>
           </div>
-          <div className="grid grid-cols-2 gap-1">
-            {[...NAV.filter((n) => !MOBILE_TABS.includes(n.href)), { href: "/settings", label: "Settings", icon: Settings }].map(({ href, label, icon: Icon }) => (
-              <Link key={href} href={href} onClick={() => setSheetOpen(false)} className={cx("flex h-12 items-center gap-3 rounded-lg px-3 text-[15px]", isActive(pathname, href) ? "bg-surface-2 font-medium" : "hover:bg-surface-2")}>
-                <Icon className="size-5 text-ink-3" strokeWidth={1.75} />
-                {label}
-              </Link>
-            ))}
-          </div>
-          <div className="mt-2 border-t border-line pt-2">
-            <ThemeSwitch />
-            <form action={logout}>
-              <button type="submit" className="flex h-11 w-full items-center gap-3 rounded-lg px-3 text-[15px] hover:bg-surface-2">
-                <LogOut className="size-5 text-ink-3" strokeWidth={1.75} />
-                Log out
-              </button>
-            </form>
-          </div>
         </div>
-      </dialog>
-    </>
+        {children}
+      </main>
+
+      {/* Mobile pill tab bar */}
+      <nav aria-label="Main" className="fixed inset-x-3 bottom-3 z-[15] grid h-16 grid-cols-5 items-center gap-1 rounded-full bg-ink px-2 shadow-[0_10px_30px_rgba(0,0,0,.25)] md:hidden">
+        {TABS.map((t) => {
+          const active = isActive(pathname, t.href);
+          return (
+            <Link
+              key={t.href}
+              href={t.href}
+              aria-current={active ? "page" : undefined}
+              className={cx("grid h-12 place-items-center rounded-full text-[12px] font-semibold", active ? "bg-accent text-black" : "text-[#cfccc6]")}
+            >
+              {t.label}
+            </Link>
+          );
+        })}
+        <button type="button" onClick={() => setCmdOpen(true)} className="h-12 rounded-full text-[12px] font-semibold text-[#cfccc6]">
+          More
+        </button>
+      </nav>
+
+      {timer && <SessionPill timer={timer} />}
+      {cmdOpen && <CommandPalette topics={topics} onClose={() => setCmdOpen(false)} />}
+    </div>
   );
 }
 
-function ThemeSwitch() {
-  // Saved on this device in localStorage; the inline script in the root layout applies it before paint.
-  const [theme, setThemeChoice] = usePersistentState<ThemeChoice>(THEME_KEY, "system");
-  const next: ThemeChoice = theme === "system" ? "light" : theme === "light" ? "dark" : "system";
-  const Icon = theme === "light" ? Sun : theme === "dark" ? Moon : SunMoon;
-  const label = theme === "light" ? "Light theme" : theme === "dark" ? "Dark theme" : "System theme";
+function CommandPalette({ topics, onClose }: { topics: { id: string; code: string; title: string }[]; onClose: () => void }) {
+  const router = useRouter();
+  const [q, setQ] = useState("");
+  const [active, setActive] = useState(0);
+  const listRef = useRef<HTMLDivElement>(null);
+  const items = useMemo(() => {
+    const query = q.trim().toLowerCase();
+    const pages = [...PAGES.map((p) => ({ label: p.label, kind: "PAGE", href: p.href })), { label: "Sign out", kind: "ACTION", href: "#logout" }];
+    const pageHits = pages.filter((p) => !query || p.label.toLowerCase().includes(query));
+    const topicHits = query ? topics.filter((t) => `${t.code} ${t.title}`.toLowerCase().includes(query)).slice(0, 8).map((t) => ({ label: t.title, kind: `TOPIC ${t.code}`, href: `/roadmap/${t.id}` })) : [];
+    return [...pageHits, ...topicHits].slice(0, 12);
+  }, [q, topics]);
+
+  const go = useCallback(
+    (href: string) => {
+      onClose();
+      if (href === "#logout") void logout();
+      else router.push(href);
+    },
+    [onClose, router],
+  );
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
   return (
-    <button
-      type="button"
-      onClick={() => {
-        setThemeChoice(next);
-        applyTheme(next);
-      }}
-      className="flex h-9 w-full items-center gap-3 rounded-lg px-2.5 text-[14px] text-ink-2 hover:bg-surface-2/70 hover:text-ink max-lg:h-11 max-lg:px-3 max-lg:text-[15px]"
-      title={`Switch to ${next} theme`}
-    >
-      <Icon className="size-4.5 text-ink-3" strokeWidth={1.75} />
-      {label}
-    </button>
+    <div className="fixed inset-0 z-30 flex items-start justify-center bg-[var(--scrim)] pt-[14vh]" onClick={onClose}>
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label="Command palette"
+        onClick={(e) => e.stopPropagation()}
+        className="w-[600px] max-w-[calc(100%-32px)] overflow-hidden rounded-[20px] border border-line-strong bg-raised shadow-[0_30px_80px_rgba(0,0,0,.45)]"
+      >
+        <form autoComplete="off"
+          className="flex items-center gap-3 border-b border-line px-5"
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (items[active]) go(items[active].href);
+          }}
+        >
+          <span className="font-mono text-accent-text" aria-hidden="true">
+            ⌘
+          </span>
+          <input
+            autoFocus
+            value={q}
+            onChange={(e) => {
+              setQ(e.target.value);
+              setActive(0);
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "ArrowDown") {
+                e.preventDefault();
+                setActive((a) => Math.min(items.length - 1, a + 1));
+              }
+              if (e.key === "ArrowUp") {
+                e.preventDefault();
+                setActive((a) => Math.max(0, a - 1));
+              }
+            }}
+            aria-label="Search pages and topics"
+            placeholder="Jump to a page or topic…"
+            className="h-[60px] flex-1 border-0 bg-transparent text-[18px] text-ink caret-accent-text outline-none"
+          />
+          <span className="font-mono text-[10px] text-ink-4">ESC</span>
+        </form>
+        <div ref={listRef} className="flex max-h-[50vh] flex-col overflow-y-auto p-2" role="listbox" aria-label="Results">
+          {items.map((i, idx) => (
+            <button
+              key={i.href + i.label}
+              type="button"
+              role="option"
+              aria-selected={idx === active}
+              onMouseEnter={() => setActive(idx)}
+              onClick={() => go(i.href)}
+              className={cx("flex items-center justify-between gap-3 rounded-[10px] px-3.5 py-3 text-left text-[15px]", idx === active && "bg-hover")}
+            >
+              <span className="truncate">{i.label}</span>
+              <span className="shrink-0 font-mono text-[11px] text-ink-3">{i.kind}</span>
+            </button>
+          ))}
+          {!items.length && <div className="p-3.5 text-[14px] text-ink-3">No matches.</div>}
+        </div>
+      </div>
+    </div>
   );
 }

@@ -1,7 +1,6 @@
 "use client";
 import { useState } from "react";
-import { saveTopicNotes } from "@/server/actions/learning";
-import { Button, inputClass, cx } from "@/components/ui";
+import { saveTopicNotes } from "@/local/actions/learning";
 import { useAction } from "./toast";
 
 export function NotesEditor({ topicId, initial }: { topicId: string; initial: string }) {
@@ -11,24 +10,21 @@ export function NotesEditor({ topicId, initial }: { topicId: string; initial: st
   const dirty = value !== saved;
   const save = () => run(() => saveTopicNotes(topicId, value), { onSuccess: () => setSaved(value), silent: true });
   return (
-    <div>
-      <label htmlFor={`notes-${topicId}`} className="sr-only">
-        Personal notes
-      </label>
+    <div className="flex flex-col gap-2">
       <textarea
         id={`notes-${topicId}`}
+        aria-label="Notes"
         value={value}
         onChange={(e) => setValue(e.target.value)}
         onBlur={() => dirty && save()}
-        rows={7}
-        placeholder="Summaries, questions, gotchas, links. Notes save when you click away."
-        className={cx(inputClass, "font-serif text-[16px] leading-relaxed")}
+        placeholder="Write what you understood, in your own words…"
+        className="min-h-[140px] resize-y rounded-[14px] border border-line bg-transparent p-[18px] text-[17px] leading-[1.55] text-ink outline-none focus:border-line-strong"
       />
-      <div className="mt-2 flex items-center justify-between text-[13px] text-ink-3">
-        <span aria-live="polite">{pending ? "Saving…" : dirty ? "Unsaved changes" : "Saved"}</span>
-        <Button size="sm" variant="secondary" disabled={!dirty || pending} onClick={save}>
+      <div className="flex items-center justify-between font-mono text-[11px] text-ink-3">
+        <span aria-live="polite">{pending ? "SAVING…" : dirty ? "UNSAVED CHANGES" : "SAVED"}</span>
+        <button type="button" onClick={save} disabled={!dirty || pending} className="uppercase hover:text-ink disabled:opacity-40">
           Save notes
-        </Button>
+        </button>
       </div>
     </div>
   );

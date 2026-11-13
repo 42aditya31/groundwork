@@ -1,7 +1,5 @@
-import "server-only";
-import { cache } from "react";
-import { randomUUID } from "node:crypto";
-import { and, desc, eq } from "drizzle-orm";
+import { uid } from "@/lib/uid";
+import { and, desc, eq, isNull } from "drizzle-orm";
 import { db, t } from "@/db";
 import { addDays, dateIn, todayIn } from "@/lib/dates";
 import { isDone, type DisplayStatus, type TopicStatus } from "@/lib/status";
@@ -36,20 +34,24 @@ export interface DomainView extends Domain {
 export const UNLOCK_RATIO = 0.5;
 
 /** Loads the whole syllabus tree for the user's path with progress and prerequisite locks. Memoized per request. */
-export const getPathTree = cache((userId: string, pathId: string) => {
-  const domains = db.select().from(t.domains).where(eq(t.domains.pathId, pathId)).orderBy(t.domains.sort).all();
-  const parents = db.select().from(t.parentTopics).all();
-  const topics = db.select().from(t.topics).where(eq(t.topics.pathId, pathId)).orderBy(t.topics.sort).all();
-  const prereqs = db.select().from(t.domainPrereqs).all();
-  const progress = new Map(db.select().from(t.topicProgress).where(eq(t.topicProgress.userId, userId)).all().map((p) => [p.topicId, p]));
+export const getPathTree = (async (userId: string, pathId: string): Promise<DomainView[]> => {
+  const [domains, parents, topics, prereqs, progressRows, subRows, doneRows] = await Promise.all([
+    db.select().from(t.domains).where(eq(t.domains.pathId, pathId)).orderBy(t.domains.sort).all(),
+    db.select().from(t.parentTopics).all(),
+    db.select().from(t.topics).where(eq(t.topics.pathId, pathId)).orderBy(t.topics.sort).all(),
+    db.select().from(t.domainPrereqs).all(),
+    db.select().from(t.topicProgress).where(eq(t.topicProgress.userId, userId)).all(),
+    db.select({ topicId: t.subtopics.topicId }).from(t.subtopics).all(),
+    db
+      .select({ id: t.subtopicProgress.subtopicId })
+      .from(t.subtopicProgress)
+      .where(and(eq(t.subtopicProgress.userId, userId), eq(t.subtopicProgress.done, true)))
+      .all(),
+  ]);
+  const progress = new Map(progressRows.map((p) => [p.topicId, p]));
   const subCounts = new Map<string, number>();
-  for (const s of db.select({ topicId: t.subtopics.topicId }).from(t.subtopics).all()) subCounts.set(s.topicId, (subCounts.get(s.topicId) ?? 0) + 1);
+  for (const s of subRows) subCounts.set(s.topicId, (subCounts.get(s.topicId) ?? 0) + 1);
   const subDone = new Map<string, number>();
-  const doneRows = db
-    .select({ id: t.subtopicProgress.subtopicId })
-    .from(t.subtopicProgress)
-    .where(and(eq(t.subtopicProgress.userId, userId), eq(t.subtopicProgress.done, true)))
-    .all();
   for (const r of doneRows) {
     const topicId = r.id.replace(/-s\d+$/, "");
     subDone.set(topicId, (subDone.get(topicId) ?? 0) + 1);
@@ -65,7 +67,7 @@ export const getPathTree = cache((userId: string, pathId: string) => {
     else ratio.set(d.id, base.filter((tp) => isDone(progress.get(tp.id)?.status ?? "")).length / base.length);
   }
 
-  const domainViews: DomainView[] = domains.map((d) => {
+  return domains.map((d) => {
     const prereqIds = prereqs.filter((p) => p.domainId === d.id).map((p) => p.prereqDomainId);
     const missingPrereqs = prereqIds
       .map((id) => domains.find((x) => x.id === id))
@@ -103,18 +105,21 @@ export const getPathTree = cache((userId: string, pathId: string) => {
       inPlan: views.filter((v) => v.bucket !== "continued" || isDone(v.status)).length,
     };
   });
-  return domainViews;
 });
 
-export function getPath(pathId: string) {
-  return db.select().from(t.paths).where(eq(t.paths.id, pathId)).get()!;
-}
+export const getPath = (async (pathId: string) => {
+  return (await db.select().from(t.paths).where(eq(t.paths.id, pathId)).get())!;
+});
 
 /** Writes an activity record. Only meaningful learning events count towards streaks. */
-export function recordActivity(user: Pick<SessionUser, "id" | "timezone">, a: { type: string; label: string; refId?: string | null; minutes?: number; countsForStreak: boolean }) {
-  db.insert(t.activities)
+export async function recordActivity(
+  user: Pick<SessionUser, "id" | "timezone">,
+  a: { type: string; label: string; refId?: string | null; minutes?: number; countsForStreak: boolean },
+) {
+  await db
+    .insert(t.activities)
     .values({
-      id: randomUUID(),
+      id: uid(),
       userId: user.id,
       date: todayIn(user.timezone),
       type: a.type,
@@ -134,8 +139,8 @@ export interface StreakStats {
   byDate: Map<string, { minutes: number; events: number }>;
 }
 
-export const getStreaks = cache((userId: string, timezone: string): StreakStats => {
-  const rows = db.select().from(t.activities).where(eq(t.activities.userId, userId)).all();
+export const getStreaks = (async (userId: string, timezone: string): Promise<StreakStats> => {
+  const rows = await db.select().from(t.activities).where(eq(t.activities.userId, userId)).all();
   const byDate = new Map<string, { minutes: number; events: number }>();
   for (const r of rows) {
     if (!r.countsForStreak) continue;
@@ -163,23 +168,26 @@ export const getStreaks = cache((userId: string, timezone: string): StreakStats 
   return { current, longest, activeDays: dates.length, byDate };
 });
 
-export function getRecentActivity(userId: string, limit = 8) {
+export async function getRecentActivity(userId: string, limit = 8) {
   return db.select().from(t.activities).where(eq(t.activities.userId, userId)).orderBy(desc(t.activities.createdAt)).limit(limit).all();
 }
 
-export function getSessionsTotal(userId: string) {
-  const rows = db.select({ minutes: t.learningSessions.minutes, startedAt: t.learningSessions.startedAt, endedAt: t.learningSessions.endedAt }).from(t.learningSessions).where(eq(t.learningSessions.userId, userId)).all();
+export async function getSessionsTotal(userId: string) {
+  const rows = await db
+    .select({ minutes: t.learningSessions.minutes, endedAt: t.learningSessions.endedAt })
+    .from(t.learningSessions)
+    .where(eq(t.learningSessions.userId, userId))
+    .all();
   const finished = rows.filter((r) => r.endedAt);
   return { count: finished.length, minutes: finished.reduce((n, r) => n + r.minutes, 0) };
 }
 
-export function getActiveTimer(userId: string) {
+export async function getActiveTimer(userId: string) {
   return db
     .select()
     .from(t.learningSessions)
-    .where(eq(t.learningSessions.userId, userId))
-    .all()
-    .find((s) => !s.endedAt);
+    .where(and(eq(t.learningSessions.userId, userId), isNull(t.learningSessions.endedAt)))
+    .get();
 }
 
 export function dateOfTs(ts: number, tz: string) {

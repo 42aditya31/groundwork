@@ -1,8 +1,7 @@
 "use client";
 import { useActionState, useState } from "react";
-import { Eye, EyeOff, Loader2 } from "lucide-react";
 import { login, type LoginState } from "@/server/actions/auth";
-import { Field, buttonClass, inputClass, cx } from "@/components/ui";
+import { buttonClass, underlineInput, underlineWrap } from "@/components/ui";
 
 export function LoginForm() {
   // A stopped server or lost connection shows a message instead of crashing the page.
@@ -15,60 +14,61 @@ export function LoginForm() {
     }
   }, {});
   const [show, setShow] = useState(false);
+  const fieldError = state.fieldErrors?.username ?? state.fieldErrors?.password;
   return (
-    <form action={action} className="space-y-5" noValidate>
-      {state.error && (
-        <div role="alert" className="rounded-lg border border-st-revision/30 bg-st-revision/8 px-3 py-2.5 text-sm text-st-revision">
-          {state.error}
-        </div>
-      )}
-      <Field label="Username" htmlFor="username" error={state.fieldErrors?.username}>
+    <form autoComplete="off" action={action} className="flex flex-col gap-[30px]" noValidate>
+      <label className={underlineWrap}>
+        <span className="label">Username</span>
         <input
-          id="username"
           name="username"
-          autoComplete="username"
+          autoComplete="off"
+          data-1p-ignore
+          data-lpignore="true"
+          data-form-type="other"
           autoCapitalize="words"
           spellCheck={false}
           required
           defaultValue={state.username}
+          placeholder="Enter your username"
           aria-invalid={!!state.fieldErrors?.username}
-          aria-describedby={state.fieldErrors?.username ? "username-error" : undefined}
-          className={inputClass}
-          placeholder="Your full name"
+          className={underlineInput}
         />
-      </Field>
-      <Field label="Password" htmlFor="password" error={state.fieldErrors?.password}>
-        <div className="relative">
+      </label>
+      <label className={underlineWrap}>
+        <span className="label">Password</span>
+        <span className="flex items-center">
           <input
-            id="password"
             name="password"
             type={show ? "text" : "password"}
-            autoComplete="current-password"
+            autoComplete="off"
+            data-1p-ignore
+            data-lpignore="true"
             required
+            placeholder="••••••••"
             aria-invalid={!!state.fieldErrors?.password}
-            aria-describedby={state.fieldErrors?.password ? "password-error" : undefined}
-            className={cx(inputClass, "pr-11")}
+            className={`${underlineInput} min-w-0 flex-1`}
           />
           <button
             type="button"
             onClick={() => setShow((s) => !s)}
-            aria-label={show ? "Hide password" : "Show password"}
             aria-pressed={show}
-            className="absolute inset-y-0 right-0 flex w-11 items-center justify-center rounded-r-lg text-ink-3 hover:text-ink"
+            aria-label={show ? "Hide password" : "Show password"}
+            className="py-2 pl-3 font-mono text-[11px] text-ink-3 uppercase transition-colors hover:text-accent-text"
           >
-            {show ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+            {show ? "Hide" : "Show"}
           </button>
+        </span>
+      </label>
+      {(state.error || fieldError) && (
+        <div role="alert" className="text-[13px] leading-[1.45] text-danger">
+          {state.error ?? fieldError}
         </div>
-      </Field>
-      <button type="submit" disabled={pending} className={buttonClass("primary", "lg", "w-full")}>
-        {pending ? (
-          <>
-            <Loader2 className="size-4 animate-spin" /> Signing in
-          </>
-        ) : (
-          "Sign in"
-        )}
-      </button>
+      )}
+      <div className="flex items-center gap-5">
+        <button type="submit" disabled={pending} className={buttonClass("accent", "xl")}>
+          {pending ? "Signing in…" : "Sign in ↗"}
+        </button>
+      </div>
     </form>
   );
 }

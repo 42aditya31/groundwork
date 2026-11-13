@@ -1,4 +1,3 @@
-import "server-only";
 import { and, asc, eq, gte, lte, ne } from "drizzle-orm";
 import { db, t } from "@/db";
 import { DEADLINE, addDays, dateIn, daysBetween, todayIn, weekStart } from "@/lib/dates";
@@ -8,8 +7,8 @@ import { getPathTree, getSessionsTotal, getStreaks, type TopicView } from "./dat
 
 export type ScheduleItem = typeof t.scheduleItems.$inferSelect;
 
-export function getItemsBetween(userId: string, from: string, to: string) {
-  return db
+export async function getItemsBetween(userId: string, from: string, to: string) {
+  return await db
     .select()
     .from(t.scheduleItems)
     .where(and(eq(t.scheduleItems.userId, userId), gte(t.scheduleItems.date, from), lte(t.scheduleItems.date, to)))
@@ -17,8 +16,8 @@ export function getItemsBetween(userId: string, from: string, to: string) {
     .all();
 }
 
-export function getOverview(user: SessionUser) {
-  const tree = getPathTree(user.id, user.pathId);
+export async function getOverview(user: SessionUser) {
+  const tree = await getPathTree(user.id, user.pathId);
   const topics: TopicView[] = tree.flatMap((d) => d.topics);
   const today = todayIn(user.timezone);
   const done = topics.filter((x) => isDone(x.status));
@@ -39,21 +38,21 @@ export function getOverview(user: SessionUser) {
   const nextPlanned = topics.find((x) => x.bucket !== "continued" && !isDone(x.status));
   const currentDomain = nextPlanned ? tree.find((d) => d.id === nextPlanned.domainId) : undefined;
 
-  const todayItems = getItemsBetween(user.id, today, today).filter((i) => i.status !== "rescheduled");
+  const todayItems = (await getItemsBetween(user.id, today, today)).filter((i) => i.status !== "rescheduled");
 
   const ws = weekStart(today);
-  const weekItems = getItemsBetween(user.id, ws, addDays(ws, 6)).filter((i) => i.status !== "rescheduled" || i.date < today);
+  const weekItems = (await getItemsBetween(user.id, ws, addDays(ws, 6))).filter((i) => i.status !== "rescheduled" || i.date < today);
   const weekPlanned = weekItems.reduce((n, i) => n + i.minutes, 0);
   const weekDone = weekItems.filter((i) => i.status === "done").reduce((n, i) => n + i.minutes, 0);
 
   // Pace over the last 7 days: completed vs. missed scheduled minutes.
-  const past = getItemsBetween(user.id, addDays(today, -7), addDays(today, -1));
+  const past = await getItemsBetween(user.id, addDays(today, -7), addDays(today, -1));
   const pastDone = past.filter((i) => i.status === "done").reduce((n, i) => n + i.minutes, 0);
   const pastMissed = past.filter((i) => i.status === "rescheduled" || i.status === "planned").reduce((n, i) => n + i.minutes, 0);
   const pace = pastDone + pastMissed > 0 ? pastDone / (pastDone + pastMissed) : null;
 
-  const streak = getStreaks(user.id, user.timezone);
-  const sessions = getSessionsTotal(user.id);
+  const streak = await getStreaks(user.id, user.timezone);
+  const sessions = await getSessionsTotal(user.id);
 
   // Next recommended topic: today's first unfinished learning task, else the next planned unlocked topic.
   const firstLearn = todayItems.find((i) => i.kind === "learn" && i.status === "planned" && i.topicId);
@@ -62,13 +61,13 @@ export function getOverview(user: SessionUser) {
     topics.find((x) => x.bucket !== "continued" && !isDone(x.status) && !x.locked) ||
     topics.find((x) => !isDone(x.status) && !x.locked);
 
-  const projects = db
+  const projects = await db
     .select()
     .from(t.projects)
     .where(and(eq(t.projects.userId, user.id), ne(t.projects.status, "completed")))
     .orderBy(asc(t.projects.dueDate))
-    .all()
-    .slice(0, 4);
+    .limit(4)
+    .all();
 
   return {
     tree,
@@ -89,8 +88,8 @@ export function getOverview(user: SessionUser) {
 }
 
 /** Per-day summary for the runway strip and calendar. */
-export function getDaySummaries(user: SessionUser, from: string, to: string) {
-  const items = getItemsBetween(user.id, from, to);
+export async function getDaySummaries(user: SessionUser, from: string, to: string) {
+  const items = await getItemsBetween(user.id, from, to);
   const today = todayIn(user.timezone);
   const map = new Map<string, { planned: number; done: number; missed: number; hasProject: boolean; hasAssessment: boolean; count: number }>();
   for (const i of items) {

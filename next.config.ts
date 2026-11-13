@@ -1,21 +1,17 @@
 import type { NextConfig } from "next";
 
 /**
- * Groundwork is a fully personalized, authenticated app backed by a local SQLite database,
- * so every page renders per request; Cache Components / Partial Prefetching are not used.
+ * Groundwork is local-first: sign-in is verified on the server, the syllabus is served as a small
+ * SQLite file (content/*.sqlite, built by scripts/build-content.ts), and everything a learner adds
+ * is stored in their own browser. Cache Components / Partial Prefetching are not used.
  */
 const nextConfig: NextConfig = {
   // Lets a test build live next to a running dev server (e.g. NEXT_DIST_DIR=.next-test).
   distDir: process.env.NEXT_DIST_DIR ?? ".next",
   cacheComponents: false,
   partialPrefetching: false,
-  serverExternalPackages: ["better-sqlite3"],
-  experimental: {
-    serverActions: {
-      // proof-of-work uploads (max 15 MB per file, enforced again in the action)
-      bodySizeLimit: "16mb",
-    },
-  },
+  // The syllabus databases are read at runtime by /api/content.
+  outputFileTracingIncludes: { "/api/content": ["./content/**"] },
   async headers() {
     return [
       {
@@ -30,8 +26,16 @@ const nextConfig: NextConfig = {
     ];
   },
   turbopack: {
+    // sql.js references Node's fs/path only when it runs under Node; the browser build never needs them.
+    resolveAlias: {
+      fs: { browser: "./src/lib/empty-module.ts" },
+      path: { browser: "./src/lib/empty-module.ts" },
+      crypto: { browser: "./src/lib/empty-module.ts" },
+    },
     rules: {
+      // Only our own stylesheets: running Tailwind over Next's generated next/font CSS breaks its font URLs.
       "*.css": {
+        condition: { not: "foreign" },
         loaders: ["@tailwindcss/turbopack"],
         as: "*.css",
       },

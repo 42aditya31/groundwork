@@ -4,20 +4,17 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "next build",
+    "predev": "tsx scripts/build-content.ts",
+    "build": "tsx scripts/build-content.ts && next build",
     "start": "next start",
     "lint": "eslint",
-    "db:generate": "drizzle-kit generate",
-    "db:seed": "node --env-file-if-exists=.env.local --import tsx scripts/seed.ts",
-    "db:setup": "npm run db:seed",
-    "syllabus:inspect": "tsx scripts/inspect-syllabus.ts --domains",
     "typecheck": "tsc --noEmit",
-    "test:e2e": "node --env-file=.env.local --import tsx scripts/e2e-smoke.ts",
-    "test:planner": "node --conditions=react-server --import tsx scripts/planner-check.ts",
-    "test:reset": "tsx scripts/reset-test-db.ts"
+    "content:build": "tsx scripts/build-content.ts",
+    "db:generate": "drizzle-kit generate",
+    "syllabus:inspect": "tsx scripts/inspect-syllabus.ts --domains",
+    "test:e2e": "node --env-file=.env.local --import tsx scripts/e2e-smoke.ts"
   },
   "dependencies": {
-    "better-sqlite3": "^13.1.1",
     "drizzle-orm": "^0.45.4",
     "lucide-react": "^1.72.0",
     "marked": "^18.2.0",
@@ -25,14 +22,15 @@
     "react": "19.3.0",
     "react-dom": "19.3.0",
     "server-only": "^0.0.1",
+    "sql.js": "^1.13.0",
     "zod": "^4.6.7"
   },
   "devDependencies": {
     "@tailwindcss/turbopack": "4.3.3",
-    "@types/better-sqlite3": "^9.6.0",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "@types/sql.js": "^1.4.11",
     "drizzle-kit": "^0.31.11",
     "eslint": "^9",
     "eslint-config-next": "16.4.6",

@@ -1,7 +1,6 @@
-import "server-only";
-import { randomUUID } from "node:crypto";
-import { and, eq, gte, lt, inArray, ne } from "drizzle-orm";
-import { db, t } from "@/db";
+import { uid } from "@/lib/uid";
+import { and, eq, gte, lt, inArray, ne, sql } from "drizzle-orm";
+import { db, t, type Tx } from "@/db";
 import { DEADLINE, addDays, dateIn, dateRange, dayOfWeek, daysBetween, isWeekend, todayIn, weekStart, formatMinutes } from "@/lib/dates";
 import { isDone } from "@/lib/status";
 import { COMMON_CRITERIA, DESIGNER_BLOCKS, FRONTEND_BLOCKS, PROJECT_LEVELS, type ProjectBlock } from "@/lib/syllabus/project-templates";
@@ -37,51 +36,55 @@ export function needMinutes(topic: TopicRow, progress?: { status: string; minute
   return round5(Math.max(15, topic.estMinutes - spent));
 }
 
-export function rebuildPlan(userId: string): PlanResult | null {
-  const user = db.select().from(t.users).where(eq(t.users.id, userId)).get();
+export async function rebuildPlan(userId: string): Promise<PlanResult | null> {
+  const user = await db.select().from(t.users).where(eq(t.users.id, userId)).get();
   if (!user || !user.hoursWeekday) return null;
   const today = todayIn(user.timezone);
   const now = Date.now();
 
-  const topics = db.select().from(t.topics).where(eq(t.topics.pathId, user.pathId)).orderBy(t.topics.sort).all();
-  const domains = db.select().from(t.domains).where(eq(t.domains.pathId, user.pathId)).all();
+  const topics = await db.select().from(t.topics).where(eq(t.topics.pathId, user.pathId)).orderBy(t.topics.sort).all();
+  const domains = await db.select().from(t.domains).where(eq(t.domains.pathId, user.pathId)).all();
   const domainById = new Map(domains.map((d) => [d.id, d]));
 
   // Make sure every topic has a progress row.
-  const existing = db.select().from(t.topicProgress).where(eq(t.topicProgress.userId, userId)).all();
+  const existing = await db.select().from(t.topicProgress).where(eq(t.topicProgress.userId, userId)).all();
   const progress = new Map(existing.map((p) => [p.topicId, p]));
   const missing = topics.filter((tp) => !progress.has(tp.id));
   if (missing.length) {
-    db.insert(t.topicProgress)
-      .values(missing.map((tp) => ({ userId, topicId: tp.id, updatedAt: now })))
-      .run();
+    for (let i = 0; i < missing.length; i += 100)
+      await db.insert(t.topicProgress)
+        .values(missing.slice(i, i + 100).map((tp) => ({ userId, topicId: tp.id, updatedAt: now })))
+        .onConflictDoNothing()
+        .run();
     for (const tp of missing)
       progress.set(tp.id, { userId, topicId: tp.id, status: "not_started", planBucket: "continued", notes: "", minutesSpent: 0, startedAt: null, completedAt: null, masteredAt: null, updatedAt: now });
   }
 
   if (today > DEADLINE) {
-    db.update(t.users).set({ lastPlanDate: today, planNote: "The plan period has ended. Everything not yet completed is continued learning." }).where(eq(t.users.id, userId)).run();
+    await db.update(t.users).set({ lastPlanDate: today, planNote: "The plan period has ended. Everything not yet completed is continued learning." }).where(eq(t.users.id, userId)).run();
     return { core: 0, stretch: 0, continued: topics.length, rescheduled: 0 };
   }
 
-  return db.transaction((tx) => {
+  return db.transaction(async (tx) => {
     // ── 1. Move unfinished past work forward ────────────────────────────────────────────
-    const overdue = tx
+    const overdue = await tx
       .select()
       .from(t.scheduleItems)
       .where(and(eq(t.scheduleItems.userId, userId), eq(t.scheduleItems.status, "planned"), lt(t.scheduleItems.date, today)))
       .all();
-    let rescheduled = 0;
-    for (const item of overdue) {
-      if (item.origin === "plan") {
-        tx.update(t.scheduleItems).set({ status: "rescheduled" }).where(eq(t.scheduleItems.id, item.id)).run();
-        if (item.kind === "learn" || item.kind === "project") rescheduled++;
-      } else {
-        tx.update(t.scheduleItems).set({ date: today, rescheduledFrom: item.rescheduledFrom ?? item.date }).where(eq(t.scheduleItems.id, item.id)).run();
-        rescheduled++;
-      }
-    }
-    tx.delete(t.scheduleItems)
+    // Batched: one statement per kind of change (fast on a hosted database).
+    const overduePlan = overdue.filter((i) => i.origin === "plan");
+    const overdueOther = overdue.filter((i) => i.origin !== "plan");
+    const rescheduled = overduePlan.filter((i) => i.kind === "learn" || i.kind === "project").length + overdueOther.length;
+    if (overduePlan.length)
+      await tx.update(t.scheduleItems).set({ status: "rescheduled" }).where(inArray(t.scheduleItems.id, overduePlan.map((i) => i.id))).run();
+    if (overdueOther.length)
+      await tx
+        .update(t.scheduleItems)
+        .set({ date: today, rescheduledFrom: sql`coalesce(${t.scheduleItems.rescheduledFrom}, ${t.scheduleItems.date})` })
+        .where(inArray(t.scheduleItems.id, overdueOther.map((i) => i.id)))
+        .run();
+    await tx.delete(t.scheduleItems)
       .where(and(eq(t.scheduleItems.userId, userId), eq(t.scheduleItems.origin, "plan"), eq(t.scheduleItems.status, "planned"), gte(t.scheduleItems.date, today)))
       .run();
 
@@ -89,7 +92,7 @@ export function rebuildPlan(userId: string): PlanResult | null {
     const days = dateRange(today, DEADLINE);
     const weekdayMin = Math.round((user.hoursWeekday ?? 0) * 60);
     const weekendMin = Math.round((user.hoursWeekend ?? user.hoursWeekday ?? 0) * 60);
-    const committed = tx
+    const committed = await tx
       .select()
       .from(t.scheduleItems)
       .where(and(eq(t.scheduleItems.userId, userId), gte(t.scheduleItems.date, today), ne(t.scheduleItems.status, "rescheduled")))
@@ -225,11 +228,14 @@ export function rebuildPlan(userId: string): PlanResult | null {
     for (const id of overflow) bucket.set(id, "continued");
 
     // ── 5. Persist plan buckets ──────────────────────────────────────────────────────────
+    const changes = new Map<string, string[]>();
     for (const tp of topics) {
       const p = progress.get(tp.id)!;
       const next = isDone(p.status) ? (p.planBucket === "continued" ? "core" : p.planBucket) : (bucket.get(tp.id) ?? "continued");
-      if (next !== p.planBucket) tx.update(t.topicProgress).set({ planBucket: next }).where(and(eq(t.topicProgress.userId, userId), eq(t.topicProgress.topicId, tp.id))).run();
+      if (next !== p.planBucket) changes.set(next, [...(changes.get(next) ?? []), tp.id]);
     }
+    for (const [next, ids] of changes)
+      await tx.update(t.topicProgress).set({ planBucket: next }).where(and(eq(t.topicProgress.userId, userId), inArray(t.topicProgress.topicId, ids))).run();
 
     // ── 6. Write schedule items ──────────────────────────────────────────────────────────
     const items: (typeof t.scheduleItems.$inferInsert)[] = [];
@@ -270,7 +276,7 @@ export function rebuildPlan(userId: string): PlanResult | null {
     // ── 7. Weekend projects ──────────────────────────────────────────────────────────────
     const onboardWeek = weekStart(user.onboardedAt ? dateIn(user.onboardedAt, user.timezone) : today);
     const blocks = user.pathId === "frontend" ? FRONTEND_BLOCKS : DESIGNER_BLOCKS;
-    const existingProjects = tx.select().from(t.projects).where(and(eq(t.projects.userId, userId), eq(t.projects.kind, "weekend"))).all();
+    const existingProjects = await tx.select().from(t.projects).where(and(eq(t.projects.userId, userId), eq(t.projects.kind, "weekend"))).all();
     const regenerated = new Set<string>();
     // Titles of earlier weeks, so consecutive weekends get different projects.
     const usedTitles = new Set(existingProjects.filter((p) => (p.weekStart ?? "") < weekStart(today)).map((p) => p.title));
@@ -290,10 +296,10 @@ export function rebuildPlan(userId: string): PlanResult | null {
       let projectId: string;
       if (prior) {
         projectId = prior.id;
-        if (prior.status === "planned") tx.update(t.projects).set({ ...spec, updatedAt: now }).where(eq(t.projects.id, prior.id)).run();
+        if (prior.status === "planned") await tx.update(t.projects).set({ ...spec, updatedAt: now }).where(eq(t.projects.id, prior.id)).run();
       } else {
-        projectId = randomUUID();
-        tx.insert(t.projects).values({ id: projectId, userId, kind: "weekend", weekStart: ws, status: "planned", createdAt: now, updatedAt: now, ...spec }).run();
+        projectId = uid();
+        await tx.insert(t.projects).values({ id: projectId, userId, kind: "weekend", weekStart: ws, status: "planned", createdAt: now, updatedAt: now, ...spec }).run();
       }
       regenerated.add(projectId);
       const project = prior && prior.status !== "planned" ? prior : null;
@@ -309,13 +315,13 @@ export function rebuildPlan(userId: string): PlanResult | null {
       }
     }
     // Remove stale, never-started weekend projects in the future that no longer have topics.
-    for (const p of existingProjects)
-      if (!regenerated.has(p.id) && p.status === "planned" && (p.weekStart ?? "") >= weekStart(today)) tx.delete(t.projects).where(eq(t.projects.id, p.id)).run();
+    const stale = existingProjects.filter((p) => !regenerated.has(p.id) && p.status === "planned" && (p.weekStart ?? "") >= weekStart(today)).map((p) => p.id);
+    if (stale.length) await tx.delete(t.projects).where(inArray(t.projects.id, stale)).run();
 
     // ── 8. Stage capstones and the final portfolio project ───────────────────────────────
-    syncCapstones(tx, user, topics, domainById, bucket, progress, learnDays, now);
+    await syncCapstones(tx, user, topics, domainById, bucket, progress, learnDays, now);
 
-    if (items.length) tx.insert(t.scheduleItems).values(items).run();
+    for (let i = 0; i < items.length; i += 60) await tx.insert(t.scheduleItems).values(items.slice(i, i + 60)).run();
 
     const counts = { core: 0, stretch: 0, continued: 0 };
     for (const tp of topics) {
@@ -328,7 +334,7 @@ export function rebuildPlan(userId: string): PlanResult | null {
       rescheduled > 0
         ? `${rescheduled} unfinished ${rescheduled === 1 ? "task was" : "tasks were"} moved forward and your plan was rebalanced.`
         : `Plan updated: ${counts.core + counts.stretch} topics scheduled (${formatMinutes(plannedMinutes)}), ${counts.continued} marked as continued learning.`;
-    tx.update(t.users).set({ lastPlanDate: today, planNote: note }).where(eq(t.users.id, userId)).run();
+    await tx.update(t.users).set({ lastPlanDate: today, planNote: note }).where(eq(t.users.id, userId)).run();
     return { ...counts, rescheduled };
   });
 }
@@ -343,7 +349,7 @@ function item(
   extra: { topicId?: string; topicIds?: string[]; projectId?: string; sort?: number },
 ): typeof t.scheduleItems.$inferInsert {
   return {
-    id: randomUUID(),
+    id: uid(),
     userId,
     date,
     kind,
@@ -431,9 +437,7 @@ function genericBlock(domainTitle: string): ProjectBlock {
   };
 }
 
-type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
-
-function syncCapstones(
+async function syncCapstones(
   tx: Tx,
   user: typeof t.users.$inferSelect,
   topics: TopicRow[],
@@ -443,14 +447,14 @@ function syncCapstones(
   learnDays: { date: string; learn: { topicId: string }[] }[],
   now: number,
 ) {
-  const path = tx.select().from(t.paths).where(eq(t.paths.id, user.pathId)).get();
+  const path = await tx.select().from(t.paths).where(eq(t.paths.id, user.pathId)).get();
   if (!path) return;
   const capstones = JSON.parse(path.capstones) as { stage: string; text: string }[];
-  const existing = tx.select().from(t.projects).where(and(eq(t.projects.userId, user.id), inArray(t.projects.kind, ["capstone", "final"]))).all();
+  const existing = await tx.select().from(t.projects).where(and(eq(t.projects.userId, user.id), inArray(t.projects.kind, ["capstone", "final"]))).all();
   const lastDayFor = new Map<string, string>();
   for (const d of learnDays) for (const l of d.learn) lastDayFor.set(l.topicId, d.date);
 
-  capstones.forEach((c, i) => {
+  for (const [i, c] of capstones.entries()) {
     const stageNumber = Number(/\d+/.exec(c.stage)?.[0] ?? 0);
     const stageTopics = topics.filter((tp) => domainById.get(tp.domainId)?.stageNumber === stageNumber);
     const inPlan = stageTopics.filter((tp) => bucket.get(tp.id) === "core" || bucket.get(tp.id) === "stretch" || ["completed", "mastered", "needs_revision"].includes(progress.get(tp.id)?.status ?? ""));
@@ -469,14 +473,14 @@ function syncCapstones(
       dueDate,
     };
     const prior = existing.find((p) => p.kind === "capstone" && p.sort === i);
-    if (!prior) tx.insert(t.projects).values({ id: randomUUID(), userId: user.id, kind: "capstone", status: "planned", sort: i, createdAt: now, updatedAt: now, ...spec }).run();
-    else if (prior.status === "planned") tx.update(t.projects).set({ ...spec, updatedAt: now }).where(eq(t.projects.id, prior.id)).run();
-  });
+    if (!prior) await tx.insert(t.projects).values({ id: uid(), userId: user.id, kind: "capstone", status: "planned", sort: i, createdAt: now, updatedAt: now, ...spec }).run();
+    else if (prior.status === "planned") await tx.update(t.projects).set({ ...spec, updatedAt: now }).where(eq(t.projects.id, prior.id)).run();
+  }
 
   if (!existing.some((p) => p.kind === "final")) {
-    tx.insert(t.projects)
+    await tx.insert(t.projects)
       .values({
-        id: randomUUID(),
+        id: uid(),
         userId: user.id,
         kind: "final",
         level: "Portfolio-quality project",
@@ -498,9 +502,9 @@ function syncCapstones(
 }
 
 /** Rebuilds the plan once per day, so unfinished work is moved forward automatically. */
-export function ensureFreshPlan(user: { id: string; timezone: string; lastPlanDate: string | null; hoursWeekday: number | null }) {
+export async function ensureFreshPlan(user: { id: string; timezone: string; lastPlanDate: string | null; hoursWeekday: number | null }) {
   if (!user.hoursWeekday) return;
   const today = todayIn(user.timezone);
   if (user.lastPlanDate === today) return;
-  rebuildPlan(user.id);
+  await rebuildPlan(user.id);
 }

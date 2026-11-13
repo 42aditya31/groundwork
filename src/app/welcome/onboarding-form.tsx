@@ -1,116 +1,99 @@
 "use client";
 import { useActionState, useEffect, useRef, useState } from "react";
-import { Loader2 } from "lucide-react";
-import { completeOnboarding, type OnboardingState } from "@/server/actions/settings";
-import { buttonClass, cx, inputClass } from "@/components/ui";
+import { useRouter } from "next/navigation";
+import { completeOnboarding, type OnboardingState } from "@/local/actions/settings";
+import { buttonClass } from "@/components/ui";
 
-const PRESETS = [1, 2, 3, 4, 6];
-
-export function OnboardingForm(props: { weekdays: number; weekendDays: number; essentialHours: number; initialWeekday?: number; initialWeekend?: number }) {
+export function OnboardingForm(props: {
+  weekdays: number;
+  weekendDays: number;
+  totalTopics: number;
+  essentialMinutes: number[];
+  initialWeekday?: number;
+  initialWeekend?: number;
+}) {
+  const router = useRouter();
   const [state, action, pending] = useActionState<OnboardingState, FormData>(completeOnboarding, {});
-  const [weekday, setWeekday] = useState(props.initialWeekday ?? 3);
-  const [weekend, setWeekend] = useState(props.initialWeekend ?? 4);
+  useEffect(() => {
+    if (state.done) router.replace("/");
+  }, [state.done, router]);
+  const [wd, setWd] = useState(props.initialWeekday ?? 3);
+  const [we, setWe] = useState(props.initialWeekend ?? 4);
   const tzInput = useRef<HTMLInputElement>(null);
   const tzLabel = useRef<HTMLSpanElement>(null);
   useEffect(() => {
     // The browser's timezone is only known on the client; write it straight into the form.
     const zone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
     if (tzInput.current) tzInput.current.value = zone;
-    if (tzLabel.current) tzLabel.current.textContent = zone;
+    if (tzLabel.current) tzLabel.current.textContent = zone.toUpperCase();
   }, []);
 
-  // Rough preview: weekdays carry learning (≈85% after review), weekends carry projects.
-  const learningHours = props.weekdays * weekday * 0.85;
-  const projectHours = props.weekendDays * weekend;
-  const coverage = Math.min(100, Math.round((learningHours / Math.max(1, props.essentialHours)) * 100));
+  // Estimate: weekdays carry learning (~85% after daily review); count essential topics that fit in syllabus order.
+  const learnMinutes = props.weekdays * wd * 60 * 0.85;
+  let used = 0;
+  let fits = 0;
+  for (const m of props.essentialMinutes) {
+    if (used + m > learnMinutes) break;
+    used += m;
+    fits++;
+  }
+  const hours = Math.round(learnMinutes / 60 + props.weekendDays * we);
+  const pct = Math.round((fits / Math.max(1, props.totalTopics)) * 100);
 
   return (
-    <form action={action} className="mt-10 space-y-8">
+    <form autoComplete="off" action={action} className="flex flex-col gap-12">
       <input ref={tzInput} type="hidden" name="timezone" defaultValue="UTC" />
-      <fieldset>
-        <legend className="text-[15px] font-semibold">How many hours can you realistically study on a weekday?</legend>
-        <p className="mt-1 text-sm text-ink-3">Be honest — the plan is only useful if you can keep it.</p>
-        <HoursPicker name="hoursWeekday" value={weekday} onChange={setWeekday} min={0.5} max={12} />
-      </fieldset>
-      <fieldset>
-        <legend className="text-[15px] font-semibold">And on Saturdays and Sundays?</legend>
-        <p className="mt-1 text-sm text-ink-3">Weekends are reserved for the weekly project built from that week&apos;s topics.</p>
-        <HoursPicker name="hoursWeekend" value={weekend} onChange={setWeekend} min={0} max={14} />
-      </fieldset>
-
-      <div className="rounded-xl border border-line bg-surface p-5">
-        <p className="text-sm text-ink-2">
-          About <strong className="tnum text-ink">{Math.round(learningHours)} h</strong> of topic study and <strong className="tnum text-ink">{Math.round(projectHours)} h</strong> of project work before
-          December 31.
-        </p>
-        <div className="mt-3 flex items-center gap-3">
-          <div className="h-2 flex-1 overflow-hidden rounded-full bg-surface-3">
-            <div className="h-full rounded-full bg-accent transition-[width] duration-300" style={{ width: `${coverage}%` }} />
-          </div>
-          <span className="tnum w-12 text-right text-sm font-medium">{coverage}%</span>
-        </div>
-        <p className="mt-2 text-[13px] text-ink-3">
-          {coverage >= 100
-            ? "All essential topics fit. Senior-level topics are added as stretch goals while time allows."
-            : `Roughly ${coverage}% of the essential syllabus fits. Every domain still gets its most important topics; the rest becomes continued learning for 2027.`}
-        </p>
+      <input type="hidden" name="hoursWeekday" value={wd} />
+      <input type="hidden" name="hoursWeekend" value={we} />
+      <div className="grid grid-cols-[repeat(auto-fit,minmax(280px,1fr))] border-y border-line">
+        <Stepper label={`Weekday hours · ${props.weekdays} days`} value={wd} onChange={setWd} min={0.5} max={12} className="border-line py-8 pr-8 sm:border-r" />
+        <Stepper label={`Weekend hours · ${props.weekendDays} days`} value={we} onChange={setWe} min={0} max={14} className="py-8 sm:px-8" />
       </div>
-
+      <div className="flex max-w-[820px] flex-col gap-3.5">
+        <p aria-live="polite" className="text-[22px] leading-[1.4]">
+          <span className="text-accent-text">
+            About {fits} of {props.totalTopics} topics
+          </span>{" "}
+          fit before December 31, roughly {hours} study hours. {props.totalTopics - fits} move to continued learning.
+        </p>
+        <div className="flex h-2.5 bg-track">
+          <div className="bg-accent transition-[width] duration-300" style={{ width: `${pct}%` }} />
+        </div>
+        <span className="font-mono text-[12px] text-ink-3">
+          TIMEZONE DETECTED · <span ref={tzLabel}>…</span>
+        </span>
+      </div>
       {state.error && (
-        <p role="alert" className="text-sm font-medium text-st-revision">
+        <p role="alert" className="text-[14px] text-danger">
           {state.error}
         </p>
       )}
-      <div className="flex items-center justify-between gap-4">
-        <p className="text-[13px] text-ink-3">
-          Timezone: <span ref={tzLabel}>detecting…</span>. You can change these later in Settings.
-        </p>
-        <button type="submit" disabled={pending} className={buttonClass("primary", "lg")}>
-          {pending ? (
-            <>
-              <Loader2 className="size-4 animate-spin" /> Building your plan
-            </>
-          ) : (
-            "Build my plan"
-          )}
+      <div>
+        <button type="submit" disabled={pending} className={buttonClass("accent", "xl")}>
+          {pending ? "Building your plan…" : "Build my plan ↗"}
         </button>
       </div>
     </form>
   );
 }
 
-function HoursPicker({ name, value, onChange, min, max }: { name: string; value: number; onChange: (v: number) => void; min: number; max: number }) {
+export function Stepper({ label, value, onChange, min, max, step = 0.5, className, size = "lg" }: { label: string; value: number; onChange: (v: number) => void; min: number; max: number; step?: number; className?: string; size?: "lg" | "md" }) {
+  const set = (v: number) => onChange(Math.round(Math.min(max, Math.max(min, v)) * 2) / 2);
+  const btn = size === "lg" ? "size-[52px] text-[22px]" : "size-[42px] text-[18px]";
   return (
-    <div className="mt-3 flex flex-wrap items-center gap-2">
-      {PRESETS.map((p) => (
-        <button
-          key={p}
-          type="button"
-          aria-pressed={value === p}
-          onClick={() => onChange(p)}
-          className={cx(
-            "tnum h-10 min-w-14 rounded-lg border px-3 text-sm font-medium transition-colors",
-            value === p ? "border-ink bg-ink text-bg" : "border-line-strong bg-surface text-ink-2 hover:text-ink",
-          )}
-        >
-          {p} h
+    <div className={`flex flex-col gap-3 ${className ?? ""}`}>
+      <span className="label">{label}</span>
+      <div className="flex items-center gap-6">
+        <button type="button" onClick={() => set(value - step)} disabled={value <= min} aria-label={`Fewer ${label.split(" ·")[0].toLowerCase()}`} className={`${btn} rounded-full border border-line-strong transition-colors hover:border-accent-text disabled:opacity-40`}>
+          −
         </button>
-      ))}
-      <label className="ml-1 flex items-center gap-2 text-sm text-ink-3">
-        <span>Other</span>
-        <input
-          name={name}
-          type="number"
-          inputMode="decimal"
-          step={0.5}
-          min={min}
-          max={max}
-          value={value}
-          onChange={(e) => onChange(Number(e.target.value))}
-          className={cx(inputClass, "tnum w-24")}
-          aria-label={`${name === "hoursWeekday" ? "Weekday" : "Weekend"} hours`}
-        />
-      </label>
+        <span className={`numeral tnum min-w-[110px] text-center text-ink ${size === "lg" ? "text-[clamp(88px,16vw,140px)]" : "text-[72px]"}`} aria-live="polite">
+          {Number.isInteger(value) ? value : value.toFixed(1)}
+        </span>
+        <button type="button" onClick={() => set(value + step)} disabled={value >= max} aria-label={`More ${label.split(" ·")[0].toLowerCase()}`} className={`${btn} rounded-full border border-line-strong transition-colors hover:border-accent-text disabled:opacity-40`}>
+          +
+        </button>
+      </div>
     </div>
   );
 }

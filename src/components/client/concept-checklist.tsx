@@ -1,7 +1,6 @@
 "use client";
 import { useOptimistic, useTransition } from "react";
-import { Check } from "lucide-react";
-import { toggleSubtopic } from "@/server/actions/learning";
+import { toggleSubtopic } from "@/local/actions/learning";
 import { cx } from "@/components/ui";
 import { useToast } from "./toast";
 
@@ -13,14 +12,20 @@ export function ConceptChecklist({ subtopics, disabled }: { subtopics: Sub[]; di
   const [items, setOptimistic] = useOptimistic(subtopics, (state, u: { id: string; done: boolean }) => state.map((s) => (s.id === u.id ? { ...s, done: u.done } : s)));
   const done = items.filter((s) => s.done).length;
   return (
-    <div>
-      <div className="mb-2 text-[13px] text-ink-3" aria-live="polite">
-        {done} of {items.length} checked
+    <div className="flex flex-col">
+      <div className="flex items-baseline justify-between pb-3">
+        <h2 className="label">Concepts</h2>
+        <span className="tnum font-mono text-[12px]" aria-live="polite">
+          {done} of {items.length}
+        </span>
       </div>
-      <ul className="divide-y divide-line overflow-hidden rounded-xl border border-line bg-surface">
-        {items.map((s) => (
-          <li key={s.id} className="px-3.5 py-3 sm:px-4">
-            <label className={cx("flex cursor-pointer items-start gap-3", disabled && "cursor-not-allowed opacity-60")}>
+      <div className="mb-1.5 h-[3px] bg-track">
+        <div className="h-full bg-accent transition-[width] duration-300" style={{ width: `${items.length ? (done / items.length) * 100 : 0}%` }} />
+      </div>
+      <ul>
+        {items.map((s, i) => (
+          <li key={s.id}>
+            <label className={cx("grid cursor-pointer grid-cols-[24px_32px_minmax(0,1fr)] items-start gap-3 border-b border-line-soft py-4", disabled && "cursor-not-allowed opacity-50")}>
               <input
                 type="checkbox"
                 className="peer sr-only"
@@ -38,23 +43,23 @@ export function ConceptChecklist({ subtopics, disabled }: { subtopics: Sub[]; di
               <span
                 aria-hidden="true"
                 className={cx(
-                  "mt-0.5 flex size-[20px] shrink-0 items-center justify-center rounded-md border transition-colors peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-[var(--focus)]",
-                  s.done ? "border-st-completed bg-st-completed text-bg" : "border-line-strong",
+                  "grid size-5 place-items-center rounded-md border-[1.5px] text-[12px] text-black peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-[var(--focus)]",
+                  s.done ? "border-accent bg-accent" : "border-ink-4",
                 )}
               >
-                {s.done && <Check className="size-3.5" strokeWidth={3} />}
+                {s.done ? "✓" : ""}
               </span>
-              <span className="min-w-0">
-                <span className={cx("block text-[15px] font-medium", s.done ? "text-ink-2" : "text-ink")}>{s.title}</span>
+              <span className="pt-0.5 font-mono text-[12px] text-ink-3">{String(i + 1).padStart(2, "0")}</span>
+              <span className={cx("flex flex-col gap-1", s.done && "opacity-55")}>
+                <span className="text-[17px]">{s.title}</span>
                 {s.concepts.length > 0 && (
-                  <ul className="mt-1.5 space-y-1 text-[14px] text-ink-2">
-                    {s.concepts.map((c, i) => (
-                      <li key={i} className={cx("flex gap-2", c.startsWith("— ") && "pl-4 text-ink-3")}>
-                        <span className="mt-[9px] h-px w-2.5 shrink-0 bg-line-strong" aria-hidden="true" />
+                  <span className="flex flex-col gap-0.5 text-[14px] leading-normal text-ink-2">
+                    {s.concepts.map((c, k) => (
+                      <span key={k} className={cx(c.startsWith("— ") && "pl-4 text-ink-3")}>
                         {c.replace(/^— /, "")}
-                      </li>
+                      </span>
                     ))}
-                  </ul>
+                  </span>
                 )}
               </span>
             </label>

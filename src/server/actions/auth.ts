@@ -17,7 +17,7 @@ export async function login(_prev: LoginState, formData: FormData): Promise<Logi
     const f = parsed.error.flatten().fieldErrors;
     return { username, fieldErrors: { username: f.username?.[0], password: f.password?.[0] } };
   }
-  const result = verifyCredentials(parsed.data.username, parsed.data.password);
+  const result = await verifyCredentials(parsed.data.username, parsed.data.password);
   if ("error" in result) return { username, error: result.error };
   await createSession(result.userId);
   redirect("/");

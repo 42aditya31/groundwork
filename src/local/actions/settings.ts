@@ -1,6 +1,4 @@
-"use server";
-import { revalidatePath } from "next/cache";
-import { redirect } from "next/navigation";
+import { commit } from "../store";
 import { eq } from "drizzle-orm";
 import { z } from "zod";
 import { db, t } from "@/db";
@@ -15,7 +13,7 @@ const availability = z.object({
   timezone: z.string().min(1).max(64),
 });
 
-export type OnboardingState = { error?: string };
+export type OnboardingState = { error?: string; done?: boolean };
 
 export async function completeOnboarding(_prev: OnboardingState, formData: FormData): Promise<OnboardingState> {
   const user = await requireUser();
@@ -25,7 +23,7 @@ export async function completeOnboarding(_prev: OnboardingState, formData: FormD
     timezone: formData.get("timezone") || "UTC",
   });
   if (!parsed.success) return { error: parsed.error.issues[0].message };
-  db.update(t.users)
+  await db.update(t.users)
     .set({
       hoursWeekday: parsed.data.hoursWeekday,
       hoursWeekend: parsed.data.hoursWeekend,
@@ -35,9 +33,9 @@ export async function completeOnboarding(_prev: OnboardingState, formData: FormD
     })
     .where(eq(t.users.id, user.id))
     .run();
-  rebuildPlan(user.id);
-  revalidatePath("/", "layout");
-  redirect("/");
+  await rebuildPlan(user.id);
+  commit();
+  return { done: true };
 }
 
 export async function updateAvailability(input: { hoursWeekday: number; hoursWeekend: number; timezone: string }) {
@@ -45,12 +43,11 @@ export async function updateAvailability(input: { hoursWeekday: number; hoursWee
     const user = await requireOnboardedUser();
     const parsed = availability.safeParse(input);
     if (!parsed.success) throw new ActionError(parsed.error.issues[0].message);
-    db.update(t.users)
+    await db.update(t.users)
       .set({ hoursWeekday: parsed.data.hoursWeekday, hoursWeekend: parsed.data.hoursWeekend, timezone: safeZone(parsed.data.timezone) })
       .where(eq(t.users.id, user.id))
       .run();
-    const r = rebuildPlan(user.id);
-    revalidatePath("/", "layout");
+    const r = await rebuildPlan(user.id);
     return r ? `Plan rebuilt: ${r.core + r.stretch} topics scheduled, ${r.continued} continued learning` : "Saved";
   });
 }
@@ -58,8 +55,7 @@ export async function updateAvailability(input: { hoursWeekday: number; hoursWee
 export async function replanNow() {
   return run(async () => {
     const user = await requireOnboardedUser();
-    const r = rebuildPlan(user.id);
-    revalidatePath("/", "layout");
+    const r = await rebuildPlan(user.id);
     return r ? `Plan rebuilt: ${r.core + r.stretch} topics scheduled, ${r.continued} continued learning` : "Plan rebuilt";
   });
 }

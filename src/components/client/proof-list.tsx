@@ -1,9 +1,9 @@
 "use client";
 import Link from "next/link";
-import { ExternalLink, FileText, PenTool, GitBranch, Globe, Image as ImageIcon, PenLine, Trash2, Video, Paperclip } from "lucide-react";
-import { deleteProof, setProofReview } from "@/server/actions/work";
+import { deleteProof, setProofReview } from "@/local/actions/work";
 import { PROOF_TYPES, REVIEW_LABEL, REVIEW_STATUSES } from "@/lib/status";
-import { EmptyState } from "@/components/ui";
+import { cx } from "@/components/ui";
+import { useFileUrl } from "@/local/hooks";
 import { useAction } from "./toast";
 
 export type ProofView = {
@@ -13,6 +13,7 @@ export type ProofView = {
   type: string;
   url: string | null;
   fileName: string | null;
+  filePath: string | null;
   mime: string | null;
   reflection: string;
   reviewStatus: string;
@@ -23,97 +24,133 @@ export type ProofView = {
   projectTitle: string | null;
 };
 
-const ICON: Record<string, typeof Globe> = { github: GitBranch, live: Globe, figma: PenTool, video: Video, link: Globe, image: ImageIcon, pdf: FileText, document: Paperclip, writing: PenLine, reflection: PenLine };
+export const PROOF_GLYPH: Record<string, string> = { github: "{ }", live: "↗", figma: "◇", video: "▶", link: "↗", image: "▣", pdf: "PDF", document: "DOC", writing: "¶", reflection: "~" };
+export const REVIEW_COLOR: Record<string, string> = { accepted: "var(--accent-text)", submitted: "var(--ink-2)", under_review: "var(--ink-2)", needs_changes: "var(--danger)" };
 
-export function ProofList({ proofs, compact }: { proofs: ProofView[]; compact?: boolean }) {
-  if (!proofs.length)
-    return compact ? (
-      <p className="text-sm text-ink-3">No evidence yet. Mastery requires at least one proof of work.</p>
-    ) : (
-      <EmptyState title="No proof of work yet">Add a repository, live link, Figma file, screenshot or written explanation and link it to a topic or project.</EmptyState>
-    );
+function host(url: string | null) {
+  if (!url) return null;
+  try {
+    return new URL(url).hostname.replace(/^www\./, "") + new URL(url).pathname.replace(/\/$/, "");
+  } catch {
+    return url;
+  }
+}
+
+/** Archive rows from the design: number · glyph · title/meta · date/status. */
+export function ProofList({ proofs, compact, startIndex }: { proofs: ProofView[]; compact?: boolean; startIndex?: number }) {
+  if (!proofs.length) return <p className="py-3 text-[14px] text-ink-3">{compact ? "No evidence yet. Mastery needs at least one proof of work." : "No evidence of this type yet."}</p>;
   return (
-    <ul className="divide-y divide-line overflow-hidden rounded-xl border border-line bg-surface">
-      {proofs.map((p) => (
-        <ProofRow key={p.id} proof={p} />
+    <ul className="flex flex-col">
+      {proofs.map((p, i) => (
+        <ProofRow key={p.id} proof={p} n={(startIndex ?? proofs.length) - i} compact={compact} />
       ))}
     </ul>
   );
 }
 
-function ProofRow({ proof }: { proof: ProofView }) {
+function ProofRow({ proof, n, compact }: { proof: ProofView; n: number; compact?: boolean }) {
   const [pending, run] = useAction();
-  const Icon = ICON[proof.type] ?? Globe;
   const typeLabel = PROOF_TYPES.find((t) => t.value === proof.type)?.label ?? proof.type;
-  const fileHref = proof.fileName ? `/api/files/${proof.id}` : null;
-  return (
-    <li className="px-3.5 py-3.5 sm:px-4">
-      <div className="flex items-start gap-3">
-        <span className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-lg bg-surface-2 text-ink-2">
-          <Icon className="size-4" />
-        </span>
-        <div className="min-w-0 flex-1">
-          <div className="font-medium text-ink">{proof.title}</div>
-          <div className="mt-0.5 text-[12.5px] text-ink-3">
-            {typeLabel}, {new Date(proof.submittedAt).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
-          </div>
-          {proof.description && <p className="mt-1.5 line-clamp-4 text-[14px] whitespace-pre-wrap text-ink-2">{proof.description}</p>}
-          {proof.reflection && <p className="mt-1.5 text-[13.5px] text-ink-3 italic">Reflection: {proof.reflection}</p>}
-          {fileHref && proof.mime?.startsWith("image/") && (
-            <a href={fileHref} target="_blank" rel="noopener noreferrer" className="mt-2 block w-fit">
-              {/* eslint-disable-next-line @next/next/no-img-element -- private, auth-protected file */}
-              <img src={fileHref} alt={`Screenshot: ${proof.title}`} className="max-h-48 rounded-lg border border-line object-cover" loading="lazy" />
+  const fileHref = useFileUrl(proof.fileName ? proof.filePath : null);
+  const sub = host(proof.url) ?? proof.fileName ?? (proof.description ? proof.description.slice(0, 60) : null);
+  const date = new Date(proof.submittedAt).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
+
+  if (compact)
+    return (
+      <li className="flex items-center justify-between gap-3 border-b border-line-soft py-3 text-[14px]">
+        <span className="min-w-0 truncate">
+          <span className="mr-2.5 font-mono text-[11px] text-accent-text uppercase">{typeLabel}</span>
+          {proof.url ? (
+            <a href={proof.url} target="_blank" rel="noopener noreferrer" className="hover:underline">
+              {sub}
             </a>
+          ) : fileHref ? (
+            <a href={fileHref} target="_blank" rel="noopener noreferrer" className="hover:underline">
+              {proof.title}
+            </a>
+          ) : (
+            proof.title
           )}
-          <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-[13px]">
-            {proof.url && (
-              <a href={proof.url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-ink-2 hover:text-ink">
-                Open link <ExternalLink className="size-3" />
-              </a>
-            )}
-            {fileHref && (
-              <a href={fileHref} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-ink-2 hover:text-ink">
-                {proof.fileName} <ExternalLink className="size-3" />
-              </a>
-            )}
-            {proof.topicId && proof.topicTitle && (
-              <Link href={`/roadmap/${proof.topicId}`} className="text-ink-3 hover:text-ink">
-                Topic: {proof.topicTitle}
-              </Link>
-            )}
-            {proof.projectId && proof.projectTitle && (
-              <Link href={`/projects/${proof.projectId}`} className="text-ink-3 hover:text-ink">
-                Project: {proof.projectTitle}
-              </Link>
-            )}
-          </div>
-        </div>
-        <div className="flex shrink-0 flex-col items-end gap-1.5">
-          <select
-            aria-label={`Review status of ${proof.title}`}
-            value={proof.reviewStatus}
-            disabled={pending}
-            onChange={(e) => run(() => setProofReview(proof.id, e.target.value), { silent: true })}
-            className="h-8 rounded-md border border-line bg-surface px-2 text-[12.5px] text-ink-2"
-          >
-            {REVIEW_STATUSES.map((s) => (
-              <option key={s} value={s}>
-                {REVIEW_LABEL[s]}
-              </option>
-            ))}
-          </select>
-          <button
-            type="button"
-            disabled={pending}
-            onClick={() => {
-              if (window.confirm(`Delete "${proof.title}"? Any uploaded file is removed too.`)) run(() => deleteProof(proof.id));
-            }}
-            className="inline-flex items-center gap-1 rounded px-1 py-0.5 text-[12.5px] text-ink-3 hover:text-st-revision"
-          >
-            <Trash2 className="size-3.5" /> Delete
-          </button>
-        </div>
+        </span>
+        <span className="shrink-0 font-mono text-[11px] text-ink-3 uppercase">{date}</span>
+      </li>
+    );
+
+  return (
+    <li className="grid grid-cols-[56px_minmax(0,1fr)] items-center gap-5 border-b border-line py-5 md:grid-cols-[44px_72px_minmax(0,1fr)_auto]">
+      <span className="hidden font-mono text-[12px] text-ink-4 md:block">{String(n).padStart(2, "0")}</span>
+      <span className="grid h-14 w-[56px] place-items-center rounded-xl border border-line text-[22px] font-bold tracking-[-0.02em] text-accent-text md:w-[72px]" aria-hidden="true">
+        {fileHref && proof.mime?.startsWith("image/") ? (
+          // eslint-disable-next-line @next/next/no-img-element -- file from this browser's own storage
+          <img src={fileHref} alt="" className="size-full rounded-xl object-cover" loading="lazy" />
+        ) : (
+          (PROOF_GLYPH[proof.type] ?? "↗")
+        )}
+      </span>
+      <div className="flex min-w-0 flex-col gap-1">
+        <span className="text-[24px] leading-[1.1] font-bold tracking-[-0.02em]">
+          {proof.url ? (
+            <a href={proof.url} target="_blank" rel="noopener noreferrer" className="hover:underline">
+              {proof.title}
+            </a>
+          ) : fileHref ? (
+            <a href={fileHref} target="_blank" rel="noopener noreferrer" className="hover:underline">
+              {proof.title}
+            </a>
+          ) : (
+            proof.title
+          )}
+        </span>
+        <span className="text-[12px] text-ink-3">
+          {[typeLabel, sub, proof.projectTitle].filter(Boolean).join(" · ")}
+        </span>
+        {proof.topicTitle && (
+          <span className="text-[12px] text-ink-2">
+            Demonstrates:{" "}
+            <Link href={`/roadmap/${proof.topicId}`} className="hover:underline">
+              {proof.topicTitle}
+            </Link>
+          </span>
+        )}
+        {proof.description && proof.type !== "github" && proof.type !== "live" && <p className="mt-1 line-clamp-3 text-[14px] text-ink-2">{proof.description}</p>}
+      </div>
+      <div className="col-span-full flex flex-wrap items-center gap-3 md:col-auto md:flex-col md:items-end md:gap-1.5">
+        <span className="font-mono text-[11px] text-ink-3 uppercase">{date}</span>
+        <label className="sr-only" htmlFor={`rv-${proof.id}`}>
+          Review status of {proof.title}
+        </label>
+        <select
+          id={`rv-${proof.id}`}
+          value={proof.reviewStatus}
+          disabled={pending}
+          onChange={(e) => run(() => setProofReview(proof.id, e.target.value), { silent: true })}
+          className="cursor-pointer appearance-none border-0 bg-transparent p-0 text-right font-mono text-[11px] outline-none"
+          style={{ color: REVIEW_COLOR[proof.reviewStatus] ?? "var(--ink-2)" }}
+        >
+          {REVIEW_STATUSES.map((s) => (
+            <option key={s} value={s}>
+              ● {REVIEW_LABEL[s]}
+            </option>
+          ))}
+        </select>
+        <button
+          type="button"
+          disabled={pending}
+          onClick={() => {
+            if (window.confirm(`Delete "${proof.title}"? Any uploaded file is removed too.`)) run(() => deleteProof(proof.id));
+          }}
+          className={cx("font-mono text-[11px] text-ink-3 uppercase hover:text-danger")}
+        >
+          Delete
+        </button>
       </div>
     </li>
   );
+}
+
+/** An image stored in this browser (proof screenshots). */
+export function LocalFileImage({ fileKey, alt, className }: { fileKey: string | null; alt: string; className?: string }) {
+  const src = useFileUrl(fileKey);
+  // eslint-disable-next-line @next/next/no-img-element -- file from this browser's own storage
+  return src ? <img src={src} alt={alt} className={className} /> : null;
 }

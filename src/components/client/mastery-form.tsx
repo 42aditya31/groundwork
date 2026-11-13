@@ -1,8 +1,8 @@
 "use client";
 import { useState } from "react";
-import { submitMastery } from "@/server/actions/learning";
+import { submitMastery } from "@/local/actions/learning";
 import { MASTERY_THRESHOLD, MIN_EXPLANATION_CHARS, RATING_LABELS, type Criterion } from "@/lib/mastery";
-import { Button, cx, inputClass } from "@/components/ui";
+import { buttonClass, cx } from "@/components/ui";
 import { useAction } from "./toast";
 
 export function MasteryForm({ topicId, criteria, status, proofs }: { topicId: string; criteria: Criterion[]; status: string; proofs: { id: string; title: string; type: string; linked: boolean }[] }) {
@@ -12,92 +12,113 @@ export function MasteryForm({ topicId, criteria, status, proofs }: { topicId: st
   const [overrides, setOverrides] = useState<Record<string, boolean>>({});
   const selected = new Set(proofs.filter((p) => overrides[p.id] ?? p.linked).map((p) => p.id));
   const [pending, run] = useAction();
-  const ready = ["completed", "needs_revision", "mastered"].includes(status);
+  const ready = ["completed", "needs_revision"].includes(status);
   const allRated = criteria.every((c) => ratings[c.key]);
-  const wouldPass = allRated && criteria.every((c) => ratings[c.key] >= MASTERY_THRESHOLD) && selected.size > 0 && explanation.trim().length >= MIN_EXPLANATION_CHARS;
+  const len = explanation.trim().length;
+  const canSubmit = ready && allRated && len >= MIN_EXPLANATION_CHARS;
   const sorted = [...proofs].sort((a, b) => Number(b.linked) - Number(a.linked));
 
-  if (!ready)
-    return <p className="rounded-xl border border-dashed border-line-strong px-4 py-4 text-sm text-ink-3">Mark this topic as completed first. Mastery is assessed separately, with evidence.</p>;
-  if (status === "mastered")
-    return <p className="rounded-xl border border-line bg-surface px-4 py-4 text-sm text-ink-2">You&apos;ve mastered this topic. If it gets rusty, flag it for revision and reassess later.</p>;
+  const note =
+    status === "mastered"
+      ? "Mastered, with evidence on record. If it gets rusty, flag it for revision and reassess."
+      : ready
+        ? "Rate yourself honestly. Every criterion at 3 or above, a written explanation and linked proof of work earn mastery."
+        : "Locked until the topic is completed. Mastery is assessed separately, with evidence.";
 
   return (
-    <form
-      className="space-y-6"
-      onSubmit={(e) => {
-        e.preventDefault();
-        run(() => submitMastery({ topicId, ratings, explanation, proofIds: [...selected] }), {
-          onSuccess: () => {
-            setRatings({});
-            setExplanation("");
-          },
-        });
-      }}
-    >
-      <div className="space-y-4">
-        {criteria.map((c) => (
-          <fieldset key={c.key}>
-            <legend className="text-[15px] font-medium text-ink">{c.label}</legend>
-            <p className="text-[13px] text-ink-3">{c.prompt}</p>
-            <div className="mt-2 grid grid-cols-2 gap-1.5 sm:grid-cols-4">
-              {[1, 2, 3, 4].map((v) => (
-                <label
-                  key={v}
-                  className={cx(
-                    "flex cursor-pointer items-center justify-center rounded-lg border px-2 py-2 text-center text-[13px] transition-colors has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-[var(--focus)]",
-                    ratings[c.key] === v ? "border-ink bg-ink text-bg" : "border-line-strong bg-surface text-ink-2 hover:text-ink",
-                  )}
-                >
-                  <input type="radio" name={c.key} value={v} className="sr-only" checked={ratings[c.key] === v} onChange={() => setRatings((r) => ({ ...r, [c.key]: v }))} />
-                  {RATING_LABELS[v]}
-                </label>
-              ))}
+    <section aria-labelledby="mastery-title" className="flex flex-col gap-[18px] rounded-[20px] border border-accent p-7">
+      <div className="flex flex-col gap-1.5">
+        <h2 id="mastery-title" className="text-[34px] font-extrabold tracking-[-0.02em]">
+          Mastery assessment
+        </h2>
+        <p className="text-[14px] leading-normal text-ink-2">{note}</p>
+      </div>
+      {status !== "mastered" && (
+        <form autoComplete="off"
+          className="flex flex-col"
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (!canSubmit) return;
+            run(() => submitMastery({ topicId, ratings, explanation, proofIds: [...selected] }), {
+              onSuccess: () => {
+                setRatings({});
+                setExplanation("");
+              },
+            });
+          }}
+        >
+          <fieldset disabled={!ready} className={cx("flex flex-col", !ready && "opacity-35")}>
+            {criteria.map((c) => {
+              const v = ratings[c.key];
+              return (
+                <div key={c.key} role="radiogroup" aria-label={c.label} className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3.5 border-b border-line-soft py-3 sm:grid-cols-[minmax(0,1fr)_auto_110px]">
+                  <span className="text-[15px]" title={c.prompt}>
+                    {c.label}
+                  </span>
+                  <div className="flex gap-1.5">
+                    {[1, 2, 3, 4].map((n) => {
+                      const on = v === n;
+                      return (
+                        <button
+                          key={n}
+                          type="button"
+                          role="radio"
+                          aria-checked={on}
+                          title={RATING_LABELS[n]}
+                          onClick={() => setRatings((r) => ({ ...r, [c.key]: n }))}
+                          className="grid size-9 place-items-center rounded-full border font-mono text-[13px] transition-colors"
+                          style={{
+                            background: on ? (n >= MASTERY_THRESHOLD ? "var(--accent)" : "var(--danger)") : "transparent",
+                            color: on ? "#000" : "var(--ink-2)",
+                            borderColor: on ? "transparent" : "var(--line-strong)",
+                          }}
+                        >
+                          {n}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <span className="hidden text-right font-mono text-[11px] text-ink-3 sm:block">{v ? RATING_LABELS[v] : "—"}</span>
+                </div>
+              );
+            })}
+            <textarea
+              value={explanation}
+              onChange={(e) => setExplanation(e.target.value)}
+              aria-label="Written explanation"
+              placeholder={`Explain the topic as if teaching it. At least ${MIN_EXPLANATION_CHARS} characters.`}
+              className="mt-4 min-h-[100px] resize-y rounded-xl border border-line bg-transparent p-3.5 text-[15px] leading-normal text-ink outline-none focus:border-line-strong"
+            />
+            <span className="mt-1.5 font-mono text-[11px] text-ink-3">
+              {len} / {MIN_EXPLANATION_CHARS} CHARACTERS
+            </span>
+            <div className="mt-4 flex flex-col gap-2">
+              <span className="label">Evidence</span>
+              {sorted.length ? (
+                <ul className="flex max-h-48 flex-col overflow-auto">
+                  {sorted.map((p) => (
+                    <li key={p.id}>
+                      <label className="flex cursor-pointer items-center gap-3 border-b border-line-soft py-2.5 text-[14px]">
+                        <input type="checkbox" checked={selected.has(p.id)} onChange={(e) => setOverrides((o) => ({ ...o, [p.id]: e.target.checked }))} className="size-4 accent-[var(--accent)]" />
+                        <span className="min-w-0 flex-1 truncate">{p.title}</span>
+                        {p.linked && <span className="font-mono text-[10px] text-ink-3">LINKED</span>}
+                      </label>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="text-[13px] text-danger">Attach proof of work above first. Mastery can&apos;t be claimed without evidence.</p>
+              )}
             </div>
           </fieldset>
-        ))}
-      </div>
-
-      <label className="block space-y-1.5">
-        <span className="text-[15px] font-medium text-ink">Explain it in your own words</span>
-        <span className="block text-[13px] text-ink-3">How it works, when to use it, a trade-off or a mistake you made. At least {MIN_EXPLANATION_CHARS} characters.</span>
-        <textarea value={explanation} onChange={(e) => setExplanation(e.target.value)} rows={5} className={cx(inputClass, "font-serif text-[16px]")} />
-        <span className="tnum block text-right text-[12px] text-ink-3">{explanation.trim().length} characters</span>
-      </label>
-
-      <fieldset>
-        <legend className="text-[15px] font-medium text-ink">Evidence</legend>
-        <p className="text-[13px] text-ink-3">Select proof of work that demonstrates this topic. Unlinked entries you select will be linked to it.</p>
-        {sorted.length ? (
-          <ul className="mt-2 max-h-56 space-y-1 overflow-auto rounded-lg border border-line bg-surface p-2">
-            {sorted.map((p) => (
-              <li key={p.id}>
-                <label className="flex cursor-pointer items-center gap-2.5 rounded-md px-2 py-1.5 text-sm hover:bg-surface-2">
-                  <input
-                    type="checkbox"
-                    checked={selected.has(p.id)}
-                    onChange={(e) => setOverrides((o) => ({ ...o, [p.id]: e.target.checked }))}
-                    className="size-4 accent-[var(--accent)]"
-                  />
-                  <span className="min-w-0 flex-1 truncate text-ink">{p.title}</span>
-                  {p.linked && <span className="text-[12px] text-ink-3">linked</span>}
-                </label>
-              </li>
-            ))}
-          </ul>
-        ) : (
-          <p className="mt-2 text-sm text-st-revision">Add a proof of work entry above first — mastery can&apos;t be claimed without evidence.</p>
-        )}
-      </fieldset>
-
-      <div className="flex flex-wrap items-center justify-between gap-3 border-t border-line pt-4">
-        <p className="text-[13px] text-ink-3" aria-live="polite">
-          {!allRated ? "Rate every criterion." : wouldPass ? "This assessment meets the mastery bar." : "This will be saved, and the topic flagged for revision until it meets the bar."}
-        </p>
-        <Button type="submit" variant="primary" disabled={pending || !allRated || explanation.trim().length < MIN_EXPLANATION_CHARS}>
-          Submit assessment
-        </Button>
-      </div>
-    </form>
+          <p className="mt-4 text-[13px] text-ink-3" aria-live="polite">
+            {!ready ? "" : !allRated ? "Rate every criterion." : len < MIN_EXPLANATION_CHARS ? "Write a little more." : selected.size === 0 ? "Will be saved and flagged for revision until evidence is attached." : criteria.every((c) => (ratings[c.key] ?? 0) >= MASTERY_THRESHOLD) ? "This meets the mastery bar." : "Saved and flagged for revision on the criteria below 3."}
+          </p>
+          <button type="submit" disabled={pending || !canSubmit} className={buttonClass("accent", "lg", "mt-3 self-start")}>
+            Submit assessment
+          </button>
+        </form>
+      )}
+    </section>
   );
 }

@@ -1,8 +1,4 @@
-"use server";
-import { randomUUID } from "node:crypto";
-import fs from "node:fs/promises";
-import path from "node:path";
-import { revalidatePath } from "next/cache";
+import { uid } from "@/lib/uid";
 import { and, eq } from "drizzle-orm";
 import { z } from "zod";
 import { db, t } from "@/db";
@@ -10,11 +6,9 @@ import { PROJECT_STATUSES, PROOF_TYPES, REVIEW_STATUSES } from "@/lib/status";
 import { requireOnboardedUser } from "../auth";
 import { recordActivity } from "../data";
 import { ActionError, ownProject, ownProof, ownTopic, run } from "../guards";
-import { uploadDir } from "../files";
+import { MAX_UPLOAD_BYTES, deleteFile, putFile } from "../files";
 
-const refresh = () => revalidatePath("/", "layout");
 
-const MAX_BYTES = 15 * 1024 * 1024;
 const ALLOWED: Record<string, string[]> = {
   image: [".png", ".jpg", ".jpeg", ".webp", ".gif"],
   pdf: [".pdf"],
@@ -72,8 +66,8 @@ export async function createProof(formData: FormData) {
     if (!parsed.success) throw new ActionError(parsed.error.issues[0].message);
     const data = parsed.data;
     const kind = PROOF_TYPES.find((p) => p.value === data.type)!;
-    if (data.topicId) ownTopic(user, data.topicId);
-    if (data.projectId) ownProject(user, data.projectId);
+    if (data.topicId) await ownTopic(user, data.topicId);
+    if (data.projectId) await ownProject(user, data.projectId);
     if (!data.topicId && !data.projectId) throw new ActionError("Link the proof to a topic or a project so it counts as evidence.");
 
     let file: { name: string; path: string; mime: string; size: number } | null = null;
@@ -84,22 +78,25 @@ export async function createProof(formData: FormData) {
     } else if (kind.needs === "file") {
       const upload = formData.get("file");
       if (!(upload instanceof File) || upload.size === 0) throw new ActionError("Choose a file to upload.");
-      if (upload.size > MAX_BYTES) throw new ActionError("Files can be up to 15 MB.");
-      const ext = path.extname(upload.name).toLowerCase();
+      if (upload.size > MAX_UPLOAD_BYTES) throw new ActionError(`Files can be up to ${Math.round(MAX_UPLOAD_BYTES / 1024 / 1024)} MB.`);
+      const ext = (upload.name.match(/\.[^.]+$/)?.[0] ?? "").toLowerCase();
       if (!ALLOWED[data.type]?.includes(ext)) throw new ActionError(`That file type isn't supported here. Use ${ALLOWED[data.type].join(", ")}.`);
-      const dir = path.join(uploadDir(), user.id);
-      await fs.mkdir(dir, { recursive: true });
-      const stored = `${randomUUID()}${ext}`;
-      await fs.writeFile(path.join(dir, stored), Buffer.from(await upload.arrayBuffer()));
-      file = { name: upload.name.slice(0, 200), path: path.join(user.id, stored), mime: MIME_BY_EXT[ext] ?? "application/octet-stream", size: upload.size };
+      const mime = MIME_BY_EXT[ext] ?? "application/octet-stream";
+      const key = `idb:${user.id}:${uid()}${ext}`;
+      try {
+        await putFile(key, { blob: upload.slice(0, upload.size, mime), name: upload.name.slice(0, 200), mime });
+      } catch {
+        throw new ActionError("This browser couldn't store the file. Free some space, or add a link instead.");
+      }
+      file = { name: upload.name.slice(0, 200), path: key, mime, size: upload.size };
       if (data.url && !validUrl(data.url)) data.url = "";
     } else if (data.description.length < 40) {
       throw new ActionError("Write at least a few sentences (40+ characters) for a written explanation or reflection.");
     }
 
     const now = Date.now();
-    const id = randomUUID();
-    db.insert(t.proofs)
+    const id = uid();
+    await db.insert(t.proofs)
       .values({
         id,
         userId: user.id,
@@ -119,8 +116,7 @@ export async function createProof(formData: FormData) {
         updatedAt: now,
       })
       .run();
-    recordActivity(user, { type: "proof", label: `Submitted proof: ${data.title}`, refId: id, countsForStreak: true });
-    refresh();
+    await recordActivity(user, { type: "proof", label: `Submitted proof: ${data.title}`, refId: id, countsForStreak: true });
     return "Proof of work saved";
   });
 }
@@ -128,20 +124,18 @@ export async function createProof(formData: FormData) {
 export async function setProofReview(proofId: string, status: string) {
   return run(async () => {
     const user = await requireOnboardedUser();
-    ownProof(user, proofId);
+    await ownProof(user, proofId);
     const s = z.enum(REVIEW_STATUSES).parse(status);
-    db.update(t.proofs).set({ reviewStatus: s, updatedAt: Date.now() }).where(eq(t.proofs.id, proofId)).run();
-    refresh();
+    await db.update(t.proofs).set({ reviewStatus: s, updatedAt: Date.now() }).where(eq(t.proofs.id, proofId)).run();
   });
 }
 
 export async function deleteProof(proofId: string) {
   return run(async () => {
     const user = await requireOnboardedUser();
-    const proof = ownProof(user, proofId);
-    if (proof.filePath) await fs.rm(path.join(uploadDir(), proof.filePath), { force: true });
-    db.delete(t.proofs).where(eq(t.proofs.id, proof.id)).run();
-    refresh();
+    const proof = await ownProof(user, proofId);
+    if (proof.filePath?.startsWith("idb:")) await deleteFile(proof.filePath).catch(() => undefined);
+    await db.delete(t.proofs).where(eq(t.proofs.id, proof.id)).run();
     return "Proof deleted";
   });
 }
@@ -158,10 +152,10 @@ const workSchema = z.object({
 export async function saveProjectWork(projectId: string, input: z.input<typeof workSchema>) {
   return run(async () => {
     const user = await requireOnboardedUser();
-    const project = ownProject(user, projectId);
+    const project = await ownProject(user, projectId);
     const parsed = workSchema.safeParse(input);
     if (!parsed.success) throw new ActionError(parsed.error.issues[0].message);
-    db.update(t.projects)
+    await db.update(t.projects)
       .set({
         deliverableText: parsed.data.deliverableText,
         reflection: parsed.data.reflection,
@@ -172,7 +166,6 @@ export async function saveProjectWork(projectId: string, input: z.input<typeof w
       })
       .where(eq(t.projects.id, project.id))
       .run();
-    refresh();
     return "Project saved";
   });
 }
@@ -180,11 +173,11 @@ export async function saveProjectWork(projectId: string, input: z.input<typeof w
 export async function setProjectStatus(projectId: string, statusRaw: string) {
   return run(async () => {
     const user = await requireOnboardedUser();
-    const project = ownProject(user, projectId);
+    const project = await ownProject(user, projectId);
     const status = z.enum(PROJECT_STATUSES).parse(statusRaw);
     const now = Date.now();
     if (status === "submitted" || status === "under_review" || status === "completed") {
-      const proofs = db.select().from(t.proofs).where(and(eq(t.proofs.userId, user.id), eq(t.proofs.projectId, project.id))).all();
+      const proofs = await db.select().from(t.proofs).where(and(eq(t.proofs.userId, user.id), eq(t.proofs.projectId, project.id))).all();
       const criteria = JSON.parse(project.criteria) as string[];
       const assessment = JSON.parse(project.selfAssessment) as Record<string, number>;
       const missing: string[] = [];
@@ -196,7 +189,7 @@ export async function setProjectStatus(projectId: string, statusRaw: string) {
       if (missing.length) throw new ActionError(`Before submitting: ${missing.join(", ")}.`);
     }
     if (status === "completed" && !["submitted", "under_review"].includes(project.status)) throw new ActionError("Submit the project before marking it completed.");
-    db.update(t.projects)
+    await db.update(t.projects)
       .set({
         status,
         submittedAt: status === "submitted" ? now : project.submittedAt,
@@ -206,9 +199,8 @@ export async function setProjectStatus(projectId: string, statusRaw: string) {
       .where(eq(t.projects.id, project.id))
       .run();
     if (status === "submitted" && project.status !== "submitted")
-      recordActivity(user, { type: "project_submitted", label: `Submitted ${project.title}`, refId: project.id, countsForStreak: true });
-    if (status === "completed") recordActivity(user, { type: "project_completed", label: `Completed ${project.title}`, refId: project.id, countsForStreak: false });
-    refresh();
+      await recordActivity(user, { type: "project_submitted", label: `Submitted ${project.title}`, refId: project.id, countsForStreak: true });
+    if (status === "completed") await recordActivity(user, { type: "project_completed", label: `Completed ${project.title}`, refId: project.id, countsForStreak: false });
     return `Project ${status.replace("_", " ")}`;
   });
 }
@@ -218,20 +210,19 @@ export async function setProjectStatus(projectId: string, statusRaw: string) {
 export async function updateResourceState(resourceId: string, patch: { bookmarked?: boolean; read?: boolean; note?: string }) {
   return run(async () => {
     const user = await requireOnboardedUser();
-    const res = db.select().from(t.resources).where(eq(t.resources.id, resourceId)).get();
+    const res = await db.select().from(t.resources).where(eq(t.resources.id, resourceId)).get();
     if (!res || res.pathId !== user.pathId) throw new ActionError("That resource isn't in your library.");
-    const current = db.select().from(t.resourceStates).where(and(eq(t.resourceStates.userId, user.id), eq(t.resourceStates.resourceId, resourceId))).get();
+    const current = await db.select().from(t.resourceStates).where(and(eq(t.resourceStates.userId, user.id), eq(t.resourceStates.resourceId, resourceId))).get();
     const next = {
       bookmarked: patch.bookmarked ?? current?.bookmarked ?? false,
       read: patch.read ?? current?.read ?? false,
       note: (patch.note ?? current?.note ?? "").slice(0, 5000),
       updatedAt: Date.now(),
     };
-    db.insert(t.resourceStates)
+    await db.insert(t.resourceStates)
       .values({ userId: user.id, resourceId, ...next })
       .onConflictDoUpdate({ target: [t.resourceStates.userId, t.resourceStates.resourceId], set: next })
       .run();
-    refresh();
     return patch.note !== undefined ? "Note saved" : undefined;
   });
 }

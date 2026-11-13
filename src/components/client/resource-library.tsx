@@ -1,10 +1,9 @@
 "use client";
 import { useMemo, useState } from "react";
-import { Bookmark, Check, ExternalLink, NotebookPen, Search } from "lucide-react";
-import { updateResourceState } from "@/server/actions/work";
-import { Button, cx, inputClass } from "@/components/ui";
-import { useAction } from "./toast";
+import { updateResourceState } from "@/local/actions/work";
+import { buttonClass, cx, inputClass } from "@/components/ui";
 import { usePersistentState } from "@/lib/persistent";
+import { useAction } from "./toast";
 
 type Resource = {
   id: string;
@@ -17,179 +16,167 @@ type Resource = {
   category: string;
   section: string;
   domainId: string | null;
+  domainLabel: string | null;
   bookmarked: boolean;
   read: boolean;
   note: string;
 };
 
-export function ResourceLibrary({
-  resources,
-  domains,
-  categories,
-  initialDomain,
-}: {
-  resources: Resource[];
-  domains: { id: string; code: string; title: string }[];
-  categories: string[];
-  initialDomain: string;
-}) {
-  const [q, setQ] = useState("");
-  const [cat, setCat] = usePersistentState("resources.category", "");
+export function ResourceLibrary({ resources, categories, domains, initialDomain }: { resources: Resource[]; categories: string[]; domains: { id: string; label: string }[]; initialDomain: string }) {
+  const [cat, setCat] = usePersistentState("resources.category", "All");
+  const [show, setShow] = usePersistentState<"all" | "saved" | "unread">("resources.show", "all");
   const [domain, setDomain] = useState(initialDomain);
-  const [show, setShow] = usePersistentState<"all" | "bookmarked" | "unread" | "read">("resources.show", "all");
+  const [q, setQ] = useState("");
   const counts = useMemo(() => {
     const m = new Map<string, number>();
     for (const r of resources) m.set(r.category, (m.get(r.category) ?? 0) + 1);
     return m;
   }, [resources]);
-  const list = useMemo(() => {
-    const query = q.trim().toLowerCase();
-    return resources.filter(
-      (r) =>
-        (!cat || r.category === cat) &&
-        (!domain || r.domainId === domain) &&
-        (show === "all" || (show === "bookmarked" ? r.bookmarked : show === "read" ? r.read : !r.read)) &&
-        (!query || `${r.name} ${r.creator} ${r.what} ${r.type} ${r.section}`.toLowerCase().includes(query)),
-    );
-  }, [resources, q, cat, domain, show]);
-  const domainLabel = new Map(domains.map((d) => [d.id, `Domain ${d.code}: ${d.title}`]));
+  const query = q.trim().toLowerCase();
+  const list = resources.filter(
+    (r) =>
+      (cat === "All" || r.category === cat) &&
+      (!domain || r.domainId === domain) &&
+      (show === "all" || (show === "saved" ? r.bookmarked : !r.read)) &&
+      (!query || `${r.name} ${r.creator} ${r.what} ${r.type}`.toLowerCase().includes(query)),
+  );
 
   return (
-    <div className="space-y-5">
-      <div className="flex gap-1.5 overflow-x-auto pb-1" role="tablist" aria-label="Resource categories">
-        {[["", "All"], ...categories.map((c) => [c, c])].map(([value, label]) => (
+    <div className="grid items-start gap-12 md:grid-cols-[220px_minmax(0,1fr)]">
+      <nav aria-label="Resource categories" className="flex flex-col gap-0.5 md:sticky md:top-9">
+        <span className="label pb-3">Categories</span>
+        {["All", ...categories].map((c) => (
           <button
-            key={value}
-            role="tab"
-            aria-selected={cat === value}
-            onClick={() => setCat(value)}
-            className={cx(
-              "h-8 shrink-0 rounded-full border px-3 text-[13px] whitespace-nowrap transition-colors",
-              cat === value ? "border-ink bg-ink text-bg" : "border-line bg-surface text-ink-2 hover:text-ink",
-            )}
+            key={c}
+            type="button"
+            aria-pressed={cat === c}
+            onClick={() => setCat(c)}
+            className={cx("flex cursor-pointer items-center justify-between gap-2.5 py-2 text-left text-[14px] transition-colors hover:text-ink", cat === c ? "text-ink" : "text-ink-3")}
           >
-            {label}
-            <span className="tnum ml-1.5 opacity-60">{value ? (counts.get(value) ?? 0) : resources.length}</span>
+            <span className="flex items-center gap-2.5">
+              <span aria-hidden="true" className={cx("size-1.5 rounded-full", cat === c ? "bg-accent" : "bg-transparent")} />
+              {c}
+            </span>
+            <span className="font-mono text-[11px] text-ink-4">{c === "All" ? resources.length : (counts.get(c) ?? 0)}</span>
           </button>
         ))}
-      </div>
-      <div className="flex flex-col gap-2 sm:flex-row">
-        <label className="relative min-w-0 flex-1">
-          <span className="sr-only">Search resources</span>
-          <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-ink-3" />
-          <input type="search" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search by name, creator or topic" className={cx(inputClass, "h-10 pl-9")} />
-        </label>
-        <select aria-label="Domain" value={domain} onChange={(e) => setDomain(e.target.value)} className={cx(inputClass, "h-10 sm:w-64")}>
-          <option value="">All domains and directory</option>
-          {domains.map((d) => (
-            <option key={d.id} value={d.id}>
-              Domain {d.code}: {d.title}
-            </option>
-          ))}
-        </select>
-        <select aria-label="Reading state" value={show} onChange={(e) => setShow(e.target.value as typeof show)} className={cx(inputClass, "h-10 sm:w-36")}>
-          <option value="all">Everything</option>
-          <option value="bookmarked">Bookmarked</option>
-          <option value="unread">Unread</option>
-          <option value="read">Read</option>
-        </select>
-      </div>
-      <p className="text-[13px] text-ink-3" aria-live="polite">
-        {list.length} {list.length === 1 ? "resource" : "resources"}
-      </p>
-      <ul className="divide-y divide-line overflow-hidden rounded-xl border border-line bg-surface">
-        {list.map((r) => (
-          <ResourceRow key={r.id} r={r} context={r.domainId ? domainLabel.get(r.domainId) : r.section} />
+        <span className="label pt-6 pb-2">Show</span>
+        {(
+          [
+            ["all", "Everything"],
+            ["saved", "Saved"],
+            ["unread", "Unread"],
+          ] as const
+        ).map(([k, l]) => (
+          <button key={k} type="button" aria-pressed={show === k} onClick={() => setShow(k)} className={cx("py-1.5 text-left text-[14px] hover:text-ink", show === k ? "text-ink" : "text-ink-3")}>
+            {show === k ? "● " : "○ "}
+            {l}
+          </button>
         ))}
-        {!list.length && <li className="px-4 py-10 text-center text-sm text-ink-3">No resources match these filters.</li>}
-      </ul>
+      </nav>
+
+      <div className="flex min-w-0 flex-col gap-7">
+        <div className="flex flex-col gap-2.5">
+          <span className="font-mono text-[12px] text-ink-3">RESOURCES · {resources.length} FROM THE SYLLABUS</span>
+          <h1 className="text-[clamp(44px,5vw,64px)] leading-none font-extrabold tracking-[-0.02em]">
+            The <em className="font-medium text-muted not-italic">reading list.</em>
+          </h1>
+        </div>
+        <div className="flex flex-col gap-3">
+          <div className="flex items-center gap-4 border-b-2 border-line-strong pb-2 focus-within:border-ink">
+            <input
+              type="search"
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              aria-label="Search resources"
+              placeholder="Search by title or author…"
+              className="h-11 min-w-0 flex-1 border-0 bg-transparent p-0 text-[20px] text-ink caret-accent-text outline-none"
+            />
+            <span aria-live="polite" className="font-mono text-[11px] whitespace-nowrap text-ink-3">
+              {list.length} {list.length === 1 ? "RESOURCE" : "RESOURCES"}
+            </span>
+          </div>
+          <select aria-label="Domain" value={domain} onChange={(e) => setDomain(e.target.value)} className="h-9 max-w-[320px] rounded-full border border-line-strong bg-transparent px-3.5 text-[13px] text-ink-2 outline-none">
+            <option value="">All domains and the directory</option>
+            {domains.map((d) => (
+              <option key={d.id} value={d.id}>
+                {d.label}
+              </option>
+            ))}
+          </select>
+        </div>
+        <ul className="flex flex-col">
+          {list.map((r) => (
+            <ResourceRow key={r.id} r={r} />
+          ))}
+          {!list.length && <li className="py-8 text-[15px] text-ink-3">Nothing matches. Try another category or search.</li>}
+        </ul>
+      </div>
     </div>
   );
 }
 
-function ResourceRow({ r, context }: { r: Resource; context?: string }) {
+function ResourceRow({ r }: { r: Resource }) {
   const [pending, run] = useAction();
   const [noteOpen, setNoteOpen] = useState(false);
   const [note, setNote] = useState(r.note);
   return (
-    <li className="px-3.5 py-3.5 sm:px-4">
-      <div className="flex items-start gap-3">
-        <div className="min-w-0 flex-1">
-          <a href={r.url} target="_blank" rel="noopener noreferrer" className={cx("inline-flex items-center gap-1.5 font-medium hover:underline", r.read ? "text-ink-2" : "text-ink")}>
+    <li className="border-b border-line py-[18px]">
+      <div className="grid items-center gap-5 md:grid-cols-[minmax(0,1fr)_150px_auto]">
+        <div className={cx("flex min-w-0 flex-col gap-1", r.read && "opacity-60")}>
+          <a href={r.url} target="_blank" rel="noopener noreferrer" className="text-[22px] leading-[1.15] font-bold tracking-[-0.02em] hover:underline">
             {r.name}
-            <ExternalLink className="size-3.5 shrink-0 text-ink-3" />
           </a>
-          <div className="mt-0.5 text-[12.5px] text-ink-3">
-            {[r.creator, r.category, context].filter(Boolean).join(", ")}
-          </div>
-          {r.what && <p className="mt-1 text-[14px] text-ink-2">{r.what}</p>}
-          {r.extraUrls.length > 0 && (
-            <div className="mt-1 flex flex-wrap gap-3 text-[13px]">
-              {r.extraUrls.map((u) => (
-                <a key={u} href={u} target="_blank" rel="noopener noreferrer" className="text-ink-3 hover:text-ink">
-                  {new URL(u).hostname.replace(/^www\./, "")}
-                </a>
-              ))}
-            </div>
-          )}
-          {r.note && !noteOpen && <p className="mt-1.5 border-l-2 border-line-strong pl-2.5 text-[13.5px] whitespace-pre-wrap text-ink-2">{r.note}</p>}
-          {noteOpen && (
-            <form
-              className="mt-2 space-y-2"
-              onSubmit={(e) => {
-                e.preventDefault();
-                run(() => updateResourceState(r.id, { note }), { onSuccess: () => setNoteOpen(false) });
-              }}
-            >
-              <label className="sr-only" htmlFor={`note-${r.id}`}>
-                Note for {r.name}
-              </label>
-              <textarea id={`note-${r.id}`} rows={3} value={note} onChange={(e) => setNote(e.target.value)} className={inputClass} autoFocus />
-              <div className="flex gap-2">
-                <Button type="submit" size="sm" variant="primary" disabled={pending}>
-                  Save note
-                </Button>
-                <Button size="sm" variant="ghost" onClick={() => setNoteOpen(false)}>
-                  Cancel
-                </Button>
-              </div>
-            </form>
-          )}
+          <span className="text-[13px] text-ink-3">{[r.creator, r.what].filter(Boolean).join(" · ")}</span>
+          {r.note && !noteOpen && <p className="mt-1 border-l-2 border-accent pl-2.5 text-[13px] whitespace-pre-wrap text-ink-2">{r.note}</p>}
         </div>
-        <div className="flex shrink-0 items-center gap-0.5">
+        <div className="flex flex-col gap-[3px] font-mono text-[11px] text-ink-3">
+          <span>{r.category}</span>
+          <span className="truncate">{r.domainLabel ?? "Cross-cutting"}</span>
+        </div>
+        <div className="flex flex-wrap gap-1.5">
           <button
             type="button"
+            disabled={pending}
             aria-pressed={r.bookmarked}
-            aria-label={r.bookmarked ? `Remove bookmark from ${r.name}` : `Bookmark ${r.name}`}
+            onClick={() => run(() => updateResourceState(r.id, { bookmarked: !r.bookmarked }), { silent: true })}
+            className={cx(buttonClass("outline", "sm", "h-8 px-3 text-[12px]"), r.bookmarked ? "text-accent-text" : "text-ink-3")}
+          >
+            {r.bookmarked ? "★ Saved" : "☆ Save"}
+          </button>
+          <button
+            type="button"
             disabled={pending}
-            onClick={() => run(() => updateResourceState(r.id, { bookmarked: !r.bookmarked }))}
-            className={cx("flex size-9 items-center justify-center rounded-lg hover:bg-surface-2", r.bookmarked ? "text-accent" : "text-ink-3")}
-          >
-            <Bookmark className={cx("size-4", r.bookmarked && "fill-current")} />
-          </button>
-          <button
-            type="button"
-            aria-label={`Add a note to ${r.name}`}
-            onClick={() => setNoteOpen((o) => !o)}
-            className="flex size-9 items-center justify-center rounded-lg text-ink-3 hover:bg-surface-2 hover:text-ink"
-          >
-            <NotebookPen className="size-4" />
-          </button>
-          <button
-            type="button"
             aria-pressed={r.read}
-            disabled={pending}
-            onClick={() => run(() => updateResourceState(r.id, { read: !r.read }))}
-            className={cx(
-              "ml-1 inline-flex h-8 items-center gap-1 rounded-md border px-2 text-[12.5px] transition-colors",
-              r.read ? "border-st-completed/40 bg-st-completed/10 text-st-completed" : "border-line-strong text-ink-2 hover:text-ink",
-            )}
+            onClick={() => run(() => updateResourceState(r.id, { read: !r.read }), { silent: true })}
+            className={cx(buttonClass("outline", "sm", "h-8 px-3 text-[12px]"), r.read ? "text-ink" : "text-ink-3")}
           >
-            {r.read && <Check className="size-3.5" />}
-            {r.read ? "Read" : "Mark read"}
+            {r.read ? "✓ Read" : "Mark read"}
+          </button>
+          <button type="button" onClick={() => setNoteOpen((o) => !o)} aria-expanded={noteOpen} className={buttonClass("ghost", "sm", "h-8 px-2.5 text-[12px]")}>
+            Note
           </button>
         </div>
       </div>
+      {noteOpen && (
+        <form autoComplete="off"
+          className="mt-3 flex flex-col gap-2"
+          onSubmit={(e) => {
+            e.preventDefault();
+            run(() => updateResourceState(r.id, { note }), { onSuccess: () => setNoteOpen(false) });
+          }}
+        >
+          <textarea aria-label={`Note for ${r.name}`} rows={3} value={note} onChange={(e) => setNote(e.target.value)} className={inputClass} autoFocus />
+          <div className="flex gap-2">
+            <button type="submit" disabled={pending} className={buttonClass("ink", "sm")}>
+              Save note
+            </button>
+            <button type="button" onClick={() => setNoteOpen(false)} className={buttonClass("ghost", "sm")}>
+              Cancel
+            </button>
+          </div>
+        </form>
+      )}
     </li>
   );
 }

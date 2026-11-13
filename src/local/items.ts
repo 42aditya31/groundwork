@@ -1,4 +1,3 @@
-import "server-only";
 import { eq } from "drizzle-orm";
 import { db, t } from "@/db";
 import type { DomainView } from "./data";
@@ -24,10 +23,10 @@ export interface ItemView {
   reviewTopics: { id: string; title: string }[];
 }
 
-export function enrichItems(items: ScheduleItem[], tree: DomainView[], userId: string): ItemView[] {
+export async function enrichItems(items: ScheduleItem[], tree: DomainView[], userId: string): Promise<ItemView[]> {
   const topicIndex = new Map<string, { title: string; status: string; locked: boolean; domain: DomainView }>();
   for (const d of tree) for (const tp of d.topics) topicIndex.set(tp.id, { title: tp.title, status: tp.status, locked: tp.locked, domain: d });
-  const projectTitles = new Map(db.select({ id: t.projects.id, title: t.projects.title }).from(t.projects).where(eq(t.projects.userId, userId)).all().map((p) => [p.id, p.title]));
+  const projectTitles = new Map((await db.select({ id: t.projects.id, title: t.projects.title }).from(t.projects).where(eq(t.projects.userId, userId)).all()).map((p) => [p.id, p.title]));
   return items.map((i) => {
     const tp = i.topicId ? topicIndex.get(i.topicId) : undefined;
     const ids = JSON.parse(i.topicIds) as string[];

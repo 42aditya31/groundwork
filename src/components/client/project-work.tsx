@@ -1,10 +1,18 @@
 "use client";
 import { useState } from "react";
-import { saveProjectWork, setProjectStatus } from "@/server/actions/work";
+import { saveProjectWork, setProjectStatus } from "@/local/actions/work";
 import { RATING_LABELS } from "@/lib/mastery";
-import { PROJECT_STATUS_LABEL, type ProjectStatus } from "@/lib/status";
-import { Button, Field, cx, inputClass } from "@/components/ui";
+import { Field, buttonClass, cx, inputClass } from "@/components/ui";
 import { useAction } from "./toast";
+
+export function StartProjectButton({ projectId }: { projectId: string }) {
+  const [pending, run] = useAction();
+  return (
+    <button type="button" disabled={pending} onClick={() => run(() => setProjectStatus(projectId, "in_progress"))} className={buttonClass("accent", "lg", "h-12")}>
+      Start project
+    </button>
+  );
+}
 
 export function ProjectWork({
   projectId,
@@ -26,114 +34,92 @@ export function ProjectWork({
   const [pending, run] = useAction();
   const dirty =
     deliverableText !== initial.deliverableText || reflection !== initial.reflection || skills !== initial.skills || JSON.stringify(selfAssessment) !== JSON.stringify(initial.selfAssessment);
-
-  const checklist = [
-    { ok: deliverableText.trim().length >= 20, label: "Deliverable described" },
-    { ok: proofCount > 0, label: "Proof of work attached" },
-    { ok: criteria.every((_, i) => selfAssessment[String(i)]), label: "Every criterion self-assessed" },
-    { ok: reflection.trim().length >= 40, label: "Reflection written" },
-    { ok: skills.trim().length >= 3, label: "Skills demonstrated listed" },
+  const gate = [
+    { ok: deliverableText.trim().length >= 20, t: "Deliverable described" },
+    { ok: proofCount > 0, t: "Proof of work attached" },
+    { ok: criteria.every((_, i) => selfAssessment[String(i)]), t: "Self-assessment on every criterion" },
+    { ok: reflection.trim().length >= 40, t: "Reflection written" },
+    { ok: skills.trim().length >= 3, t: "Skills demonstrated" },
   ];
-  const canSubmit = checklist.every((c) => c.ok) && !dirty;
-  const save = () => run(() => saveProjectWork(projectId, { deliverableText, reflection, skills, selfAssessment }));
+  const canSubmit = gate.every((g) => g.ok) && !dirty;
   const locked = status === "completed";
 
   return (
-    <div className="space-y-6">
-      <fieldset disabled={locked} className="space-y-5">
-        <Field label="Deliverable" htmlFor="pw-deliverable" hint="What did you build or design? Include links in your proof of work.">
-          <textarea id="pw-deliverable" rows={4} value={deliverableText} onChange={(e) => setDeliverable(e.target.value)} className={inputClass} />
+    <div className="flex flex-col gap-6">
+      <fieldset disabled={locked} className="flex flex-col gap-5">
+        <Field label="Deliverable" htmlFor={`pw-d-${projectId}`} hint="What did you build or design? Put links in proof of work.">
+          <textarea id={`pw-d-${projectId}`} rows={3} value={deliverableText} onChange={(e) => setDeliverable(e.target.value)} className={inputClass} />
         </Field>
-        <div>
-          <div className="text-sm font-medium text-ink">Self-assessment</div>
-          <p className="text-[13px] text-ink-3">Rate your work honestly against each evaluation criterion.</p>
-          <div className="mt-3 space-y-3">
-            {criteria.map((c, i) => (
-              <div key={i} className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
-                <span className="text-[14px] text-ink-2">{c}</span>
-                <div role="radiogroup" aria-label={c} className="flex gap-1">
-                  {[1, 2, 3, 4].map((v) => (
+        <div className="flex flex-col gap-2">
+          <span className="label">Self-assessment</span>
+          {criteria.map((c, i) => (
+            <div key={i} role="radiogroup" aria-label={c} className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 border-b border-line-soft py-2.5">
+              <span className="text-[14px] text-ink-2">{c}</span>
+              <div className="flex gap-1.5">
+                {[1, 2, 3, 4].map((v) => {
+                  const on = selfAssessment[String(i)] === v;
+                  return (
                     <button
                       key={v}
                       type="button"
                       role="radio"
-                      aria-checked={selfAssessment[String(i)] === v}
+                      aria-checked={on}
                       title={RATING_LABELS[v]}
                       onClick={() => setSA((s) => ({ ...s, [String(i)]: v }))}
-                      className={cx(
-                        "tnum h-8 w-9 rounded-md border text-[13px] transition-colors",
-                        selfAssessment[String(i)] === v ? "border-ink bg-ink text-bg" : "border-line-strong bg-surface text-ink-2 hover:text-ink",
-                      )}
+                      className={cx("grid size-8 place-items-center rounded-full border font-mono text-[12px]", on ? "border-transparent bg-ink text-on-ink" : "border-line-strong text-ink-2")}
                     >
                       {v}
                     </button>
-                  ))}
-                </div>
+                  );
+                })}
               </div>
-            ))}
-            <p className="text-[12.5px] text-ink-3">1 not yet, 2 with help, 3 independently, 4 could teach it.</p>
-          </div>
+            </div>
+          ))}
+          <span className="font-mono text-[10px] text-ink-3">1 NOT YET · 2 WITH HELP · 3 INDEPENDENTLY · 4 COULD TEACH IT</span>
         </div>
-        <Field label="Reflection" htmlFor="pw-reflection" hint="What went well, what was hard, what you'd do differently.">
-          <textarea id="pw-reflection" rows={4} value={reflection} onChange={(e) => setReflection(e.target.value)} className={inputClass} />
+        <Field label="Reflection" htmlFor={`pw-r-${projectId}`}>
+          <textarea id={`pw-r-${projectId}`} rows={3} value={reflection} onChange={(e) => setReflection(e.target.value)} className={inputClass} placeholder="What went well, what was hard, what you'd do differently." />
         </Field>
-        <Field label="Skills demonstrated" htmlFor="pw-skills" hint="Comma-separated, e.g. CSS Grid, accessible forms, error states">
-          <input id="pw-skills" value={skills} onChange={(e) => setSkills(e.target.value)} className={inputClass} />
+        <Field label="Skills demonstrated" htmlFor={`pw-s-${projectId}`}>
+          <input id={`pw-s-${projectId}`} value={skills} onChange={(e) => setSkills(e.target.value)} className={inputClass} placeholder="CSS Grid, accessible forms, error states" />
         </Field>
       </fieldset>
 
-      <div className="rounded-xl border border-line bg-surface p-4">
-        <ul className="grid gap-1.5 text-sm sm:grid-cols-2">
-          {checklist.map((c) => (
-            <li key={c.label} className={cx("flex items-center gap-2", c.ok ? "text-ink-2" : "text-ink-3")}>
-              <span className={cx("size-2 rounded-full", c.ok ? "bg-st-completed" : "border border-line-strong")} aria-hidden="true" />
-              {c.label}
-              <span className="sr-only">{c.ok ? "(done)" : "(missing)"}</span>
-            </li>
-          ))}
-        </ul>
-        <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-line pt-4">
-          <span className="text-sm text-ink-2">
-            Status: <strong className="font-medium text-ink">{PROJECT_STATUS_LABEL[status as ProjectStatus]}</strong>
+      <div className="flex flex-col gap-2">
+        <span className="label">To submit</span>
+        {gate.map((g) => (
+          <span key={g.t} className="text-[13px]" style={{ color: g.ok ? "var(--accent-text)" : "var(--ink-4)" }}>
+            {g.ok ? "✓" : "○"} <span className="text-ink-2">{g.t}</span>
           </span>
-          <div className="flex flex-wrap gap-2">
-            {!locked && (
-              <Button variant="secondary" disabled={pending || !dirty} onClick={save}>
-                Save progress
-              </Button>
-            )}
-            {status === "planned" && !dirty && (
-              <Button variant="secondary" disabled={pending} onClick={() => run(() => setProjectStatus(projectId, "in_progress"))}>
-                Start project
-              </Button>
-            )}
-            {(status === "planned" || status === "in_progress") && (
-              <Button variant="primary" disabled={pending || !canSubmit} onClick={() => run(() => setProjectStatus(projectId, "submitted"))} title={dirty ? "Save your changes first" : undefined}>
-                Submit project
-              </Button>
-            )}
-            {status === "submitted" && (
-              <>
-                <Button variant="secondary" disabled={pending} onClick={() => run(() => setProjectStatus(projectId, "under_review"))}>
-                  Mark under review
-                </Button>
-                <Button variant="primary" disabled={pending} onClick={() => run(() => setProjectStatus(projectId, "completed"))}>
-                  Mark completed
-                </Button>
-              </>
-            )}
-            {status === "under_review" && (
-              <Button variant="primary" disabled={pending} onClick={() => run(() => setProjectStatus(projectId, "completed"))}>
-                Mark completed
-              </Button>
-            )}
-            {(status === "submitted" || status === "under_review" || status === "completed") && (
-              <Button variant="ghost" disabled={pending} onClick={() => run(() => setProjectStatus(projectId, "in_progress"))}>
-                Reopen
-              </Button>
-            )}
-          </div>
-        </div>
+        ))}
+      </div>
+
+      <div className="flex flex-wrap gap-2">
+        {!locked && (
+          <button type="button" disabled={pending || !dirty} onClick={() => run(() => saveProjectWork(projectId, { deliverableText, reflection, skills, selfAssessment }))} className={buttonClass("ink", "md")}>
+            Save progress
+          </button>
+        )}
+        {(status === "planned" || status === "in_progress") && (
+          <button type="button" disabled={pending || !canSubmit} onClick={() => run(() => setProjectStatus(projectId, "submitted"))} title={dirty ? "Save your changes first" : undefined} className={buttonClass("accent", "md")}>
+            Submit project
+          </button>
+        )}
+        {status === "submitted" && (
+          <button type="button" disabled={pending} onClick={() => run(() => setProjectStatus(projectId, "under_review"))} className={buttonClass("outline", "md")}>
+            Mark under review
+          </button>
+        )}
+        {(status === "submitted" || status === "under_review") && (
+          <button type="button" disabled={pending} onClick={() => run(() => setProjectStatus(projectId, "completed"))} className={buttonClass("accent", "md")}>
+            Mark completed
+          </button>
+        )}
+        {(status === "submitted" || status === "under_review" || status === "completed") && (
+          <button type="button" disabled={pending} onClick={() => run(() => setProjectStatus(projectId, "in_progress"))} className={buttonClass("ghost", "md")}>
+            Reopen
+          </button>
+        )}
       </div>
     </div>
   );

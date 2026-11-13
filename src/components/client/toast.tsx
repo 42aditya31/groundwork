@@ -16,15 +16,15 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   return (
     <ToastContext value={push}>
       {children}
-      <div aria-live="polite" role="status" className="pointer-events-none fixed inset-x-0 bottom-20 z-[60] flex flex-col items-center gap-2 px-4 lg:bottom-6">
+      <div aria-live="polite" role="status" className="pointer-events-none fixed inset-x-0 top-4 z-[60] flex flex-col items-center gap-2 px-4">
         {toasts.map((t) => (
           <div
             key={t.id}
-            className="animate-rise pointer-events-auto flex max-w-md items-start gap-2.5 rounded-xl border border-line bg-surface px-3.5 py-2.5 text-sm text-ink shadow-pop"
+            className="animate-rise pointer-events-auto flex max-w-md items-start gap-2.5 rounded-2xl bg-ink px-4 py-3 text-[14px] text-on-ink shadow-[0_12px_40px_rgba(0,0,0,.35)]"
           >
-            {t.kind === "ok" ? <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-st-completed" /> : <AlertCircle className="mt-0.5 size-4 shrink-0 text-st-revision" />}
+            {t.kind === "ok" ? <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-accent" /> : <AlertCircle className="mt-0.5 size-4 shrink-0 text-danger" />}
             <span className="min-w-0 flex-1">{t.text}</span>
-            <button type="button" aria-label="Dismiss" onClick={() => setToasts((ts) => ts.filter((x) => x.id !== t.id))} className="-mr-1 rounded p-0.5 text-ink-3 hover:text-ink">
+            <button type="button" aria-label="Dismiss" onClick={() => setToasts((ts) => ts.filter((x) => x.id !== t.id))} className="-mr-1 rounded p-0.5 opacity-60 hover:opacity-100">
               <X className="size-3.5" />
             </button>
           </div>
